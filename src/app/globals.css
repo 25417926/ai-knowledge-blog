@@ -1,0 +1,451 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   设计令牌：双主题。变量为「空格分隔 RGB 通道」，供 tailwind 的
+   rgb(var(--x) / <alpha-value>) 使用，因此 bg-ink-panel/60 可生效。
+   ============================================================ */
+:root {
+  color-scheme: light;
+
+  --ink-bg: 243 245 250;
+  --ink-panel: 255 255 255;
+  --ink-soft: 249 250 252;
+  --ink-line: 223 229 240;
+  --ink-dim: 100 116 139;
+  --ink-text: 15 23 42;
+
+  --accent: 91 87 245;
+  --accent-soft: 238 242 255;
+  --accent-ink: 67 56 202;
+
+  --glass-bg: 255 255 255;
+  --glass-alpha: 0.72;
+
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.05), 0 10px 28px -16px rgb(15 23 42 / 0.18);
+  --shadow-lift: 0 2px 6px rgb(15 23 42 / 0.06), 0 22px 48px -22px rgb(15 23 42 / 0.28);
+
+  --ambient-1: 129 140 248;
+  --ambient-2: 56 189 248;
+  --ambient-3: 244 114 182;
+  --ambient-strength: 0.5;
+}
+
+.dark {
+  color-scheme: dark;
+
+  --ink-bg: 8 11 20;
+  --ink-panel: 20 26 44;
+  --ink-soft: 14 19 34;
+  --ink-line: 38 47 72;
+  --ink-dim: 141 153 178;
+  --ink-text: 231 236 246;
+
+  --accent: 125 135 255;
+  --accent-soft: 32 38 71;
+  --accent-ink: 173 181 255;
+
+  --glass-bg: 20 26 44;
+  --glass-alpha: 0.58;
+
+  --shadow-card: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 18px 40px -26px rgb(0 0 0 / 0.9);
+  --shadow-lift: 0 1px 0 rgb(255 255 255 / 0.05) inset, 0 28px 60px -28px rgb(0 0 0 / 0.95);
+
+  --ambient-1: 99 102 241;
+  --ambient-2: 14 165 233;
+  --ambient-3: 217 70 239;
+  --ambient-strength: 0.42;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* 主题切换时整页平滑过渡（参考站的做法） */
+body {
+  background-color: rgb(var(--ink-bg));
+  color: rgb(var(--ink-text));
+  transition:
+    background-color 700ms ease,
+    color 700ms ease;
+}
+
+::selection {
+  background: rgb(var(--accent) / 0.28);
+  color: rgb(var(--ink-text));
+}
+
+/* 同一会话内已看过开屏：layout 的内联脚本在首次绘制前打上标记，连第一帧都不闪 */
+html[data-splash='seen'] .splash {
+  display: none;
+}
+
+/* 细滚动条，融入双主题 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--ink-line)) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgb(var(--ink-line));
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--ink-dim) / 0.6);
+  background-clip: content-box;
+}
+
+@layer components {
+  /* 毛玻璃浮层：全站卡片的统一底材 */
+  .glass {
+    background-color: rgb(var(--glass-bg) / var(--glass-alpha));
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+  }
+
+  /* 卡片：hover 上浮 + 边框点亮 + 光泽扫过 */
+  .card {
+    position: relative;
+    overflow: hidden;
+    border-radius: 1rem;
+    border: 1px solid rgb(var(--ink-line));
+    background-color: rgb(var(--glass-bg) / var(--glass-alpha));
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    box-shadow: var(--shadow-card);
+    transition:
+      transform 420ms cubic-bezier(0.22, 1, 0.36, 1),
+      box-shadow 420ms cubic-bezier(0.22, 1, 0.36, 1),
+      border-color 420ms ease,
+      background-color 700ms ease;
+  }
+  .card:hover {
+    transform: translateY(-4px);
+    border-color: rgb(var(--accent) / 0.55);
+    box-shadow: var(--shadow-lift);
+  }
+  /* 封面渐变层：没有配图，用分类色制造「图像感」。
+     同一分类恒定同色，与图谱节点、小镇街区共用一套配色。 */
+  .card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.9;
+    background:
+      radial-gradient(125% 95% at 6% -25%, rgb(var(--cover-a, 99 102 241) / 0.72) 0%, transparent 60%),
+      radial-gradient(95% 80% at 104% -12%, rgb(var(--cover-b, 56 189 248) / 0.52) 0%, transparent 56%),
+      radial-gradient(70% 60% at 78% 108%, rgb(var(--cover-a, 99 102 241) / 0.3) 0%, transparent 62%);
+    transition: opacity 500ms ease;
+  }
+  .card:hover::before {
+    opacity: 1;
+  }
+  .card > * {
+    position: relative;
+    z-index: 1;
+  }
+  .card::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    background: linear-gradient(105deg, transparent 30%, rgb(255 255 255 / 0.11) 50%, transparent 70%);
+    transform: translateX(-120%);
+    pointer-events: none;
+  }
+  .card:hover::after {
+    animation: shine 1.1s ease-in-out;
+  }
+
+  /* 胶囊标签 */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    border-radius: 999px;
+    border: 1px solid rgb(var(--ink-line));
+    padding: 0.2rem 0.65rem;
+    font-size: 12px;
+    color: rgb(var(--ink-dim));
+    transition:
+      border-color 260ms ease,
+      color 260ms ease,
+      background-color 260ms ease;
+  }
+  .chip:hover {
+    border-color: rgb(var(--accent) / 0.6);
+    color: rgb(var(--ink-text));
+  }
+  .chip-active {
+    border-color: rgb(var(--accent));
+    background-color: rgb(var(--accent) / 0.14);
+    color: rgb(var(--accent-ink));
+  }
+
+  /* 渐变文字标题 */
+  .grad-text {
+    background-image: linear-gradient(
+      100deg,
+      rgb(var(--ink-text)) 10%,
+      rgb(var(--accent)) 55%,
+      rgb(var(--ambient-2)) 95%
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+}
+
+/* ============================================================
+   Markdown 正文：衬线排版（技术文章的可读性优于无衬线）
+   全部走 CSS 变量，因此双主题自动适配
+   ============================================================ */
+@layer components {
+  .md-body {
+    font-family: theme(fontFamily.serif);
+    font-size: 16.5px;
+    line-height: 1.85;
+    color: rgb(var(--ink-text) / 0.9);
+    letter-spacing: 0.01em;
+  }
+  .md-body > * + * {
+    margin-top: 1.15rem;
+  }
+  .md-body h2 {
+    margin-top: 2.75rem;
+    margin-bottom: 0.25rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid rgb(var(--ink-line));
+    font-family: theme(fontFamily.sans);
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: rgb(var(--ink-text));
+  }
+  .md-body h3 {
+    margin-top: 2rem;
+    font-family: theme(fontFamily.sans);
+    font-size: 17px;
+    font-weight: 600;
+    color: rgb(var(--ink-text));
+  }
+  .md-body h4 {
+    margin-top: 1.5rem;
+    font-family: theme(fontFamily.sans);
+    font-size: 15px;
+    font-weight: 600;
+    color: rgb(var(--ink-text));
+  }
+  .md-body a {
+    color: rgb(var(--accent));
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+    text-decoration-color: rgb(var(--accent) / 0.4);
+    transition: text-decoration-color 200ms ease;
+  }
+  .md-body a:hover {
+    text-decoration-color: rgb(var(--accent));
+  }
+  .md-body a[href^='#unresolved-'] {
+    cursor: help;
+    color: rgb(var(--ink-dim));
+    text-decoration: none;
+    border-bottom: 1px dashed rgb(var(--ink-dim) / 0.55);
+  }
+  .md-body strong {
+    font-weight: 700;
+    color: rgb(var(--ink-text));
+  }
+  .md-body em {
+    font-style: italic;
+  }
+  .md-body ul {
+    list-style: disc;
+    padding-left: 1.35rem;
+  }
+  .md-body ol {
+    list-style: decimal;
+    padding-left: 1.35rem;
+  }
+  .md-body li + li {
+    margin-top: 0.4rem;
+  }
+  .md-body li::marker {
+    color: rgb(var(--accent) / 0.75);
+  }
+  .md-body blockquote {
+    border-left: 3px solid rgb(var(--accent) / 0.5);
+    border-radius: 0 0.5rem 0.5rem 0;
+    background: rgb(var(--accent) / 0.05);
+    padding: 0.85rem 1.1rem;
+    color: rgb(var(--ink-dim));
+  }
+  .md-body blockquote > * + * {
+    margin-top: 0.75rem;
+  }
+  .md-body code {
+    font-family: theme(fontFamily.mono);
+    font-size: 0.875em;
+    background: rgb(var(--accent) / 0.08);
+    border: 1px solid rgb(var(--ink-line));
+    border-radius: 0.375rem;
+    padding: 0.1em 0.4em;
+    color: rgb(var(--accent-ink));
+  }
+  .md-body pre {
+    overflow-x: auto;
+    border-radius: 0.85rem;
+    border: 1px solid rgb(var(--ink-line));
+    background: rgb(var(--ink-soft));
+    padding: 1.1rem 1.25rem;
+    line-height: 1.7;
+    box-shadow: var(--shadow-card);
+  }
+  .md-body pre code {
+    background: transparent;
+    border: none;
+    padding: 0;
+    font-size: 13px;
+    color: rgb(var(--ink-text) / 0.92);
+  }
+
+  /* ── 代码块 ───────────────────────────────────────────
+     外层 .code-wrap 由 CodeCopy 客户端组件包出来，负责语言标签与复制按钮；
+     内层交给 shiki。行号用 CSS 计数器加，不动 shiki 的输出结构。 */
+  .md-body .code-wrap {
+    margin: 1.9rem 0;
+    border-radius: 0.85rem;
+    border: 1px solid rgb(var(--ink-line));
+    overflow: hidden;
+    box-shadow: var(--shadow-card);
+  }
+  .md-body .code-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.45rem 0.9rem;
+    border-bottom: 1px solid rgb(var(--ink-line));
+    background: rgb(var(--ink-soft));
+    font-size: 11.5px;
+    color: rgb(var(--ink-dim));
+  }
+  .md-body .code-lang {
+    font-family: theme(fontFamily.mono);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .md-body .code-copy {
+    border-radius: 999px;
+    border: 1px solid rgb(var(--ink-line));
+    padding: 0.15rem 0.7rem;
+    font-size: 11.5px;
+    color: rgb(var(--ink-dim));
+    transition:
+      border-color 240ms ease,
+      color 240ms ease;
+  }
+  .md-body .code-copy:hover {
+    border-color: rgb(var(--accent) / 0.6);
+    color: rgb(var(--ink-text));
+  }
+  .md-body .code-wrap pre {
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 1rem 1.1rem;
+  }
+  /* 让底色铺满整个横向滚动区，代码短的时候也不留一截空白 */
+  .md-body .code-wrap pre code {
+    display: block;
+    width: fit-content;
+    min-width: 100%;
+  }
+  .md-body .code-wrap.code-numbered code {
+    counter-reset: code-line;
+  }
+  .md-body .code-wrap.code-numbered .line::before {
+    counter-increment: code-line;
+    content: counter(code-line);
+    display: inline-block;
+    width: 2.2em;
+    margin-right: 1em;
+    text-align: right;
+    color: rgb(var(--ink-dim) / 0.55);
+    user-select: none;
+  }
+  /* shiki 双主题：插件只往 token 上写 CSS 变量，用哪套由 .dark 决定 */
+  .md-body pre.shiki {
+    background-color: var(--shiki-light-bg);
+  }
+  .dark .md-body pre.shiki {
+    background-color: var(--shiki-dark-bg);
+  }
+  .md-body pre.shiki span {
+    color: var(--shiki-light);
+  }
+  .dark .md-body pre.shiki span {
+    color: var(--shiki-dark);
+  }
+
+  /* 正文图片可点开灯箱 */
+  .md-body img {
+    cursor: zoom-in;
+  }
+  .md-body table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: theme(fontFamily.sans);
+    font-size: 14px;
+    overflow: hidden;
+    border-radius: 0.75rem;
+    border: 1px solid rgb(var(--ink-line));
+  }
+  .md-body th,
+  .md-body td {
+    border-bottom: 1px solid rgb(var(--ink-line));
+    padding: 0.6rem 0.85rem;
+    text-align: left;
+  }
+  .md-body th {
+    background: rgb(var(--accent) / 0.07);
+    font-weight: 600;
+    color: rgb(var(--ink-text));
+  }
+  .md-body tbody tr:last-child td {
+    border-bottom: none;
+  }
+  .md-body tbody tr:hover {
+    background: rgb(var(--accent) / 0.04);
+  }
+  .md-body hr {
+    border: none;
+    border-top: 1px solid rgb(var(--ink-line));
+    margin: 2.5rem 0;
+  }
+  .md-body img {
+    border-radius: 0.85rem;
+    border: 1px solid rgb(var(--ink-line));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

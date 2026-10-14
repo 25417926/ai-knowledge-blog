@@ -1,0 +1,15 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='1200' height='900' viewBox='0 0 1200 900'>
+<defs>
+<linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>
+<stop offset='0' stop-color='#3a2a5c'/><stop offset='0.55' stop-color='#8153d6'/><stop offset='1' stop-color='#b5a4f5'/>
+</linearGradient>
+<radialGradient id='r' cx='0.3' cy='0.25' r='0.8'>
+<stop offset='0' stop-color='#ffffff' stop-opacity='0.35'/><stop offset='1' stop-color='#ffffff' stop-opacity='0'/>
+</radialGradient>
+</defs>
+<rect width='1200' height='900' fill='url(#g)'/>
+<rect width='1200' height='900' fill='url(#r)'/>
+<circle cx='340' cy='580' r='162' fill='#ffffff' opacity='0.10'/>
+<circle cx='860' cy='360' r='116' fill='#ffffff' opacity='0.13'/>
+<text x='60' y='840' font-family='sans-serif' font-size='34' fill='#ffffff' opacity='0.55'>Seed photo 5</text>
+</svg>

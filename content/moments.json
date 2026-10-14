@@ -1,0 +1,58 @@
+[
+  {
+    "content": "把博客的首页重做了一版，从「一个列表」变成「一张卡片墙」。折腾到凌晨两点，但看到轮播动起来那一下，值了。",
+    "images": [],
+    "location": "书房",
+    "publishedAt": "2026-10-13T02:10:00+08:00",
+    "reactionCount": 12
+  },
+  {
+    "content": "周末去图书馆待了一整天。不为了查资料，就是想换个地方看书。旁边桌的大哥在写论文，我们互不打扰，各自埋头。这种「有人在旁边一起认真」的感觉挺奇妙的。",
+    "images": ["/moments/seed-2.svg", "/moments/seed-3.svg"],
+    "location": "市图书馆 · 三楼靠窗",
+    "publishedAt": "2026-10-11T18:40:00+08:00",
+    "reactionCount": 23
+  },
+  {
+    "content": "重构了一个写了三年的工具类，最后从 400 行压到 60 行。删代码比写代码爽。",
+    "images": ["/moments/seed-1.svg"],
+    "location": "",
+    "publishedAt": "2026-10-09T23:05:00+08:00",
+    "reactionCount": 31
+  },
+  {
+    "content": "把赛博小镇的角色走路动画调通了。四个方向、四帧，走起来终于不像在滑冰了。下一步想让它能跟 NPC 打招呼。",
+    "images": ["/moments/seed-4.svg", "/moments/seed-5.svg", "/moments/seed-6.svg"],
+    "location": "工位",
+    "publishedAt": "2026-10-06T21:30:00+08:00",
+    "reactionCount": 45
+  },
+  {
+    "content": "今天没有产出。上午开会，下午被一个环境问题卡了三小时，最后发现是缓存没清。",
+    "images": [],
+    "location": "",
+    "publishedAt": "2026-10-02T19:20:00+08:00",
+    "reactionCount": 8
+  },
+  {
+    "content": "国庆回老家，帮爸妈把用了八年的路由器换了。顺手把 Wi-Fi 名字改成了他们看得懂的中文。我妈说「这下好找了」。",
+    "images": ["/moments/seed-3.svg", "/moments/seed-1.svg", "/moments/seed-2.svg", "/moments/seed-6.svg"],
+    "location": "老家",
+    "publishedAt": "2026-09-30T12:00:00+08:00",
+    "reactionCount": 67
+  },
+  {
+    "content": "读了《数据密集型应用系统设计》里讲 LSM Tree 的那一节。终于明白为什么写入要先进内存表再落盘——不是为了快，是为了把随机写变成顺序写。",
+    "images": [],
+    "location": "通勤路上",
+    "publishedAt": "2026-09-25T08:15:00+08:00",
+    "reactionCount": 19
+  },
+  {
+    "content": "给自己定了个规矩：每周至少写一篇能给别人看懂的东西。第一周就差点没写完。",
+    "images": ["/moments/seed-5.svg"],
+    "location": "",
+    "publishedAt": "2026-09-20T22:45:00+08:00",
+    "reactionCount": 14
+  }
+]

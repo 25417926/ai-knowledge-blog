@@ -1,0 +1,21 @@
+node_modules/
+.next/
+out/
+data/*.db
+data/*.db-wal
+data/*.db-shm
+.env
+.env.local
+next-env.d.ts
+*.tsbuildinfo
+.DS_Store
+
+# 本地验收截图与临时产物
+.shots/
+docs/*.png
+
+# 仓库备份包（小镇下线前的快照）
+_town_backup_*.zip
+
+# 智能体本地工作数据（记忆、日志）
+.workbuddy/

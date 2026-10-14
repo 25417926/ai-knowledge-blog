@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">
+  <defs>
+    <linearGradient id="a" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#534AB7"/>
+      <stop offset="0.55" stop-color="#7F77DD"/>
+      <stop offset="1" stop-color="#5DCAA5"/>
+    </linearGradient>
+    <radialGradient id="b" cx="0.3" cy="0.22" r="0.85">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.4"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="240" height="240" rx="52" fill="url(#a)"/>
+  <rect width="240" height="240" rx="52" fill="url(#b)"/>
+  <circle cx="62" cy="196" r="46" fill="#ffffff" opacity="0.10"/>
+  <circle cx="196" cy="52" r="30" fill="#ffffff" opacity="0.14"/>
+  <text x="120" y="128" text-anchor="middle" dominant-baseline="central"
+        font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
+        font-size="86" font-weight="500" fill="#ffffff" opacity="0.92">国</text>
+</svg>
