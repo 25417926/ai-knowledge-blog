@@ -102,7 +102,7 @@ server/                   后端（FastAPI + SQLAlchemy）
       agent_chat.py   Agent 内核 + RAG 检索 + LLM 适配 + Mock 三分支
     api/routes/
       content.py      内容查询接口
-      ask.py          博客助手问答与会话回放
+      ask.py          博客助手问答（整包 + SSE 流式双路由）与会话回放
   scripts/
     init_db.py       建表 + 种子 + Vault 导入（幂等）
   requirements.txt
@@ -140,6 +140,14 @@ Mock 行为与改造前完全一致。每次工具调用记录在 `agent_turns.t
 页面只 import 它；后端用 Pydantic 的 `alias_generator` 把 snake_case 输出成 camelCase，
 两边字段名逐字一致，序列化/反序列化都不需要适配层。后端接口文档在 `/docs`（Swagger UI），
 改契约先改这里再改前端。
+
+**流式是同一份契约的另一种送达方式。** `POST /api/ask/stream` 与整包路由共用同一个
+`talk()`，区别只在生成时多传一个 `emit` 回调：token 增量与 status 过程提示实时推走，
+落库内容和 done 事件载荷与整包路由逐字一致（`jsonable_encoder` 保证 camelCase 不变）。
+事件协议四种：`token` / `status` / `done` / `error`。EventSource 只支持 GET，
+所以前端用 fetch + ReadableStream 手撕帧；传输层失败或开播即失败时自动回落整包路由，
+观感与行为都退回改造前。Mock 模式没有真流式，按 2~4 字一片模拟打字机——只影响观感，
+落库内容不变。
 
 **零原生依赖。** 后端 SQLite 走 `sqlite+aiosqlite`（纯 Python 驱动），不需要编译
 `better-sqlite3`、不需要 Visual Studio 构建工具。前端 Next.js 常规依赖。
@@ -194,6 +202,9 @@ Mock 行为与改造前完全一致。每次工具调用记录在 `agent_turns.t
 - [x] 阶段 6b：Function Calling 改造 —— 意图识别从正则挪到模型（工具循环 ≤3 轮、
       引用连续编号、about 硬约束、tool_trace 落库、阈值兜底、无 tools 端点降级），
       Mock 路径行为不变
+- [x] 阶段 6c：SSE 流式输出 —— `POST /api/ask/stream` 逐字推送（token / status / done /
+      error 四事件，done 载荷与整包路由逐字一致），Mock 模式打字机式分片，
+      流式不可用时前端自动回落整包路径
 - [ ] 阶段 5：后台写作与登录 · Wiki 自动沉淀与出处回链 · 实时日志面板
 
 ## 路线图（按依赖顺序）

@@ -39,9 +39,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# 本地单人工具：本机任意端口都放行（dev 3000 / next start 预览 3400 / 别的都行），
+# 远端来源仍然挡掉。确需收紧时用 CORS_ORIGINS 指定白名单（与正则叠加生效）
+CORS_ORIGINS = [o for o in os.environ.get("CORS_ORIGINS", "").split(",") if o]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.environ.get("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(","),
+    allow_origins=CORS_ORIGINS,
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_methods=["*"],
     allow_headers=["*"],
 )

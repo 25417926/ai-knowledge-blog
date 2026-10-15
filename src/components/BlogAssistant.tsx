@@ -13,6 +13,8 @@ type Message = {
   content: string;
   sources: Source[];
   mock: boolean;
+  /** 流式进行中：正文还在增量到达，末尾显示光标 */
+  streaming?: boolean;
 };
 
 type AskResponse = {
@@ -35,6 +37,39 @@ function lastHeading(heading: string): string {
 }
 
 /**
+ * 读 SSE 流：按空行分帧，逐帧回调 (event, data)。
+ * EventSource 不支持 POST，所以流式问答只能用 fetch + 手撕帧。
+ */
+async function readSSE(
+  res: Response,
+  onEvent: (name: string, data: Record<string, unknown>) => void,
+): Promise<void> {
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+    let split = buffer.indexOf('\n\n');
+    while (split >= 0) {
+      const frame = buffer.slice(0, split);
+      buffer = buffer.slice(split + 2);
+      let name = 'message';
+      const dataLines: string[] = [];
+      for (const line of frame.split('\n')) {
+        if (line.startsWith('event:')) name = line.slice(6).trim();
+        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+      }
+      if (dataLines.length > 0) {
+        onEvent(name, JSON.parse(dataLines.join('\n')) as Record<string, unknown>);
+      }
+      split = buffer.indexOf('\n\n');
+    }
+  }
+}
+
+/**
  * 博客端的 AI 助手。
  *
  * 它不是一个「什么都能聊」的聊天框，而是一个**只答站内内容**的读者工具：
@@ -52,6 +87,9 @@ export function BlogAssistant() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [scoped, setScoped] = useState(true);
+  /** 流式过程提示（「正在翻书架…」）；首个 token 到达后让位给正文 */
+  const [statusText, setStatusText] = useState<string | null>(null);
+  const [hasTokens, setHasTokens] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const loadedRef = useRef(false);
 
@@ -89,6 +127,94 @@ export function BlogAssistant() {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, busy]);
 
+  /** 整包路径：流式不可用时的回落，也是改造前行为的完整保留 */
+  const askViaJson = useCallback(async (bubbleId: string, message: string, about: string | null) => {
+    const res = await fetch(ASK_BASE, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, about }),
+    });
+    const payload = (await res.json()) as unknown;
+    if (!res.ok) {
+      throw new Error((payload as { error?: string }).error ?? '提问失败');
+    }
+    const data = payload as AskResponse;
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === bubbleId
+          ? { ...m, content: data.reply, sources: data.citations, mock: data.mock, streaming: false }
+          : m,
+      ),
+    );
+  }, []);
+
+  /**
+   * SSE 流式路径。返回 false 表示该回落整包路：
+   * 传输层失败（端点不存在 / 断网），或服务端在产出任何 token 之前就报错。
+   * 已经流了一半再断网则保留现场，补一句中断提示——内容比报错更值钱。
+   */
+  const askViaStream = useCallback(async (bubbleId: string, message: string, about: string | null) => {
+    let res: Response;
+    try {
+      res = await fetch(`${ASK_BASE}/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, about }),
+      });
+    } catch {
+      return false;
+    }
+    if (!res.ok || !res.body) return false;
+
+    let received = false;
+    let failure: string | null = null;
+    const append = (text: string) =>
+      setMessages((prev) =>
+        prev.map((m) => (m.id === bubbleId ? { ...m, content: m.content + text } : m)),
+      );
+    const settle = (extra = '') =>
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === bubbleId ? { ...m, content: m.content + extra, streaming: false } : m,
+        ),
+      );
+
+    const onEvent = (name: string, data: Record<string, unknown>) => {
+      if (name === 'token') {
+        if (!received) {
+          received = true;
+          setHasTokens(true);
+        }
+        append(String(data.text ?? ''));
+      } else if (name === 'status') {
+        setStatusText(String(data.text ?? ''));
+      } else if (name === 'done') {
+        const d = data as unknown as AskResponse;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === bubbleId
+              ? { ...m, content: d.reply, sources: d.citations ?? [], mock: d.mock, streaming: false }
+              : m,
+          ),
+        );
+      } else if (name === 'error') {
+        failure = String(data.message ?? '提问失败');
+      }
+    };
+
+    try {
+      await readSSE(res, onEvent);
+    } catch {
+      if (!received) return false;
+      settle('\n\n（输出中断，以上是部分内容）');
+      return true;
+    }
+
+    if (failure && !received) return false; // 开播即失败：回落整包路，让错误信息照常展示
+    settle(failure ? `\n\n（输出中断：${failure}）` : '');
+    return true;
+  }, []);
+
   const ask = useCallback(
     async (question: string, pinToArticle?: string) => {
       const message = question.trim();
@@ -96,40 +222,34 @@ export function BlogAssistant() {
       setBusy(true);
       setError(null);
       setDraft('');
+      setStatusText(null);
+      setHasTokens(false);
       setMessages((prev) => [
         ...prev,
         { id: `u${Date.now()}`, role: 'user', content: message, sources: [], mock: false },
       ]);
       // 「这篇文章讲了什么」必须锁定当前这篇：即使开关切到「搜索全部」，问的也仍是这篇
       const about = pinToArticle ?? (scopeToArticle ? articleSlug : null);
+      // 先放一个流式中的空气泡：token 直接往里追加，done 事件再用最终载荷整体替换
+      const bubbleId = `s${Date.now()}`;
+      setMessages((prev) => [
+        ...prev,
+        { id: bubbleId, role: 'assistant', content: '', sources: [], mock: false, streaming: true },
+      ]);
       try {
-        const res = await fetch(ASK_BASE, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message, about }),
-        });
-        const payload = (await res.json()) as unknown;
-        if (!res.ok) {
-          throw new Error((payload as { error?: string }).error ?? '提问失败');
-        }
-        const data = payload as AskResponse;
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `a${data.turnId}`,
-            role: 'assistant',
-            content: data.reply,
-            sources: data.citations,
-            mock: data.mock,
-          },
-        ]);
+        const streamed = await askViaStream(bubbleId, message, about);
+        if (!streamed) await askViaJson(bubbleId, message, about);
       } catch (err) {
         setError(err instanceof Error ? err.message : '提问失败');
+        // 整包路也失败了：撤掉那个没等到内容的空气泡
+        setMessages((prev) => prev.filter((m) => !(m.id === bubbleId && m.content === '')));
       } finally {
         setBusy(false);
+        setStatusText(null);
+        setHasTokens(false);
       }
     },
-    [articleSlug, busy, scopeToArticle],
+    [articleSlug, askViaJson, askViaStream, busy, scopeToArticle],
   );
 
   return (
@@ -211,9 +331,14 @@ export function BlogAssistant() {
                   </p>
                 ) : (
                   <div>
-                    <p className="whitespace-pre-wrap rounded-2xl border border-ink-line bg-ink-soft px-3.5 py-2.5 text-[13px] leading-6 text-ink-text">
-                      {m.content}
-                    </p>
+                    {(m.content !== '' || !m.streaming) && (
+                      <p className="whitespace-pre-wrap rounded-2xl border border-ink-line bg-ink-soft px-3.5 py-2.5 text-[13px] leading-6 text-ink-text">
+                        {m.content}
+                        {m.streaming && (
+                          <span className="ml-0.5 inline-block animate-pulse text-accent">▍</span>
+                        )}
+                      </p>
+                    )}
                     {m.sources.length > 0 && (
                       <div className="mt-2 space-y-1.5">
                         <p className="text-[10.5px] tracking-wide text-ink-dim">出处</p>
@@ -237,7 +362,10 @@ export function BlogAssistant() {
               </div>
             ))}
 
-            {busy && <p className="text-[12.5px] text-ink-dim">正在翻书架…</p>}
+            {/* 首个 token 到达后，过程提示让位给正在生长的正文 */}
+            {busy && !hasTokens && (
+              <p className="text-[12.5px] text-ink-dim">{statusText ?? '正在翻书架…'}</p>
+            )}
           </div>
 
           {/* 推荐问题常驻在输入框上方：已经聊过几轮之后，随手一点继续追问比空着更好用 */}

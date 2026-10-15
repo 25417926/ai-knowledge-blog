@@ -10,13 +10,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import random
 import re
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, AsyncGenerator
 
 import httpx
 from sqlalchemy import Integer, String, cast, func, select
@@ -351,12 +353,35 @@ TOOLS = [
 ]
 
 
-async def chat_completion_with_tools(messages: list[dict], tools: list[dict]) -> tuple[str, list[dict], str]:
-    """带 tools 的 chat completion，返回 (正文, 工具调用列表, 模型名)。
+def _parse_tool_args(raw: Any) -> dict:
+    """工具参数归一：JSON 字符串 → dict；解析失败按空参数处理（让工具侧报错回填）。"""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw) if raw.strip() else {}
+        except json.JSONDecodeError:
+            raw = {}
+    return raw if isinstance(raw, dict) else {}
 
-    工具调用归一化成 [{"id", "name", "args"}]；arguments 解析失败按空参数处理，
-    让工具侧报错回填给模型，比整轮失败更稳。
+
+def _normalize_tool_calls(raw: list[dict]) -> list[dict]:
+    """把 OpenAI 形态的 tool_calls 归一化成 [{"id", "name", "args"}]。
+
+    整包响应走这里；arguments 解析失败按空参数处理，让工具侧报错回填给模型，
+    比整轮失败更稳。
     """
+    calls: list[dict] = []
+    for call in raw:
+        fn = call.get("function") or {}
+        calls.append({
+            "id": call.get("id") or "",
+            "name": fn.get("name") or "",
+            "args": _parse_tool_args(fn.get("arguments")),
+        })
+    return calls
+
+
+async def chat_completion_with_tools(messages: list[dict], tools: list[dict]) -> tuple[str, list[dict], str]:
+    """带 tools 的 chat completion，返回 (正文, 工具调用列表, 模型名)。"""
     if not llm_configured():
         raise RuntimeError("LLM 未配置：缺少 LLM_BASE_URL 或 LLM_API_KEY")
     async with httpx.AsyncClient(timeout=LLM_TIMEOUT) as client:
@@ -378,19 +403,86 @@ async def chat_completion_with_tools(messages: list[dict], tools: list[dict]) ->
         raise RuntimeError(f"LLM 返回 {res.status_code}：{res.text[:200]}")
     data = res.json()
     message = (data.get("choices") or [{}])[0].get("message") or {}
-    tool_calls: list[dict] = []
-    for call in message.get("tool_calls") or []:
-        fn = call.get("function") or {}
-        raw = fn.get("arguments")
-        if isinstance(raw, str):
-            try:
-                args = json.loads(raw) if raw.strip() else {}
-            except json.JSONDecodeError:
-                args = {}
-        else:
-            args = raw if isinstance(raw, dict) else {}
-        tool_calls.append({"id": call.get("id") or "", "name": fn.get("name") or "", "args": args})
-    return (message.get("content") or "").strip(), tool_calls, LLM_MODEL
+    return (
+        (message.get("content") or "").strip(),
+        _normalize_tool_calls(message.get("tool_calls") or []),
+        LLM_MODEL,
+    )
+
+
+async def chat_completion_stream(
+    messages: list[dict], tools: list[dict]
+) -> AsyncGenerator[dict, None]:
+    """流式 chat completion：yield {"content": 增量}，最后 yield {"tool_calls": [...]}。
+
+    与 chat_completion_with_tools 同一端点、同一协议，只差 stream: true。
+    工具调用按 index 累积（流式协议把 arguments 切成碎片），流结束后一次性交出完整列表。
+    端点不返回 text/event-stream 时（忽视 stream 参数的老实人），自动退回整包解析，
+    行为与 chat_completion_with_tools 完全一致。
+    """
+    if not llm_configured():
+        raise RuntimeError("LLM 未配置：缺少 LLM_BASE_URL 或 LLM_API_KEY")
+    payload: dict[str, Any] = {
+        "model": LLM_MODEL,
+        "messages": messages,
+        "temperature": 0.8,
+        "stream": True,
+    }
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = "auto"
+    async with httpx.AsyncClient(timeout=LLM_TIMEOUT) as client:
+        async with client.stream(
+            "POST",
+            f"{LLM_BASE_URL.rstrip('/')}/chat/completions",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {LLM_API_KEY}",
+            },
+            json=payload,
+        ) as res:
+            if res.status_code >= 400:
+                raise RuntimeError(f"LLM 返回 {res.status_code}：{(await res.aread()).text[:200]}")
+            if "text/event-stream" not in res.headers.get("content-type", ""):
+                data = json.loads(await res.aread())
+                message = (data.get("choices") or [{}])[0].get("message") or {}
+                content = (message.get("content") or "").strip()
+                if content:
+                    yield {"content": content}
+                yield {"tool_calls": _normalize_tool_calls(message.get("tool_calls") or [])}
+                return
+            acc: dict[int, dict] = {}
+            async for line in res.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                chunk = line[len("data:"):].strip()
+                if chunk == "[DONE]":
+                    break
+                try:
+                    data = json.loads(chunk)
+                except json.JSONDecodeError:
+                    continue
+                for choice in data.get("choices") or []:
+                    delta = choice.get("delta") or {}
+                    text = delta.get("content")
+                    if text:
+                        yield {"content": text}
+                    for tc in delta.get("tool_calls") or []:
+                        slot = acc.setdefault(tc.get("index") or 0, {"id": "", "name": "", "args": ""})
+                        if tc.get("id"):
+                            slot["id"] = tc["id"]
+                        fn = tc.get("function") or {}
+                        if fn.get("name"):
+                            slot["name"] += fn["name"]
+                        if fn.get("arguments"):
+                            slot["args"] += fn["arguments"]
+            # acc 的槽位是流式累积形态（args 还是拼接中的 JSON 字符串），
+            # 过一遍参数解析就是归一化结果——不能再走 _normalize_tool_calls，
+            # 那个吃的是 OpenAI 的嵌套形态
+            yield {"tool_calls": [
+                {"id": s["id"], "name": s["name"], "args": _parse_tool_args(s["args"])}
+                for s in acc.values()
+            ]}
 
 
 # ────────────────────────────────────────────── 记忆与关系的读写
@@ -700,13 +792,46 @@ def build_tool_messages(ctx: ReplyContext, message: str) -> list[dict]:
     return [{"role": "system", "content": "\n".join(lines)}, *history, {"role": "user", "content": message}]
 
 
+async def _consume_stream(
+    messages: list[dict], tools: list[dict], emit: Callable[[dict], Awaitable[None]]
+) -> tuple[str, list[dict], str]:
+    """吃掉流式响应：正文增量实时转成 token 事件，结束时返回与整包版一致的三元组。
+
+    工具轮的正文通常为空；个别模型会在 tool_calls 前带一句开场白，
+    那种内容会被当轮丢弃（与整包版一致：工具轮的 content 只进对话历史，不给用户看）。
+    """
+    parts: list[str] = []
+    tool_calls: list[dict] = []
+    async for event in chat_completion_stream(messages, tools):
+        if "content" in event:
+            parts.append(event["content"])
+            await emit({"event": "token", "data": {"text": event["content"]}})
+        else:
+            tool_calls = event["tool_calls"]
+    return "".join(parts).strip(), tool_calls, LLM_MODEL
+
+
+async def _typewriter(text: str, emit: Callable[[dict], Awaitable[None]]) -> None:
+    """Mock 模式没有真流式，按 2~4 字一片模拟打字机——只影响观感，不影响落库内容。"""
+    i = 0
+    while i < len(text):
+        step = random.randint(2, 4)
+        await emit({"event": "token", "data": {"text": text[i:i + step]}})
+        i += step
+        await asyncio.sleep(0.012)
+
+
 async def _run_tool_agent(
-    session: AsyncSession, ctx: ReplyContext, input: TalkInput
+    session: AsyncSession,
+    ctx: ReplyContext,
+    input: TalkInput,
+    emit: Callable[[dict], Awaitable[None]] | None = None,
 ) -> tuple[str, str, list[dict], list[dict], list[str]]:
     """LLM 模式：模型自己决定检索什么、查几遍、记什么。
 
     与旧路径的唯一区别是「意图识别」从正则挪到了模型。工具往返全部在内存里完成，
     不落 agent_turns（那会污染短期记忆的「近 8 轮」），只把 trace 摘要挂在最终轮次上。
+    emit 非空时走流式：正文增量实时推给前端，其余行为与整包版完全一致。
     """
     box = ToolBox(session=session, agent_id=ctx.agent.id, about=input.about)
     messages = build_tool_messages(ctx, input.message)
@@ -714,7 +839,10 @@ async def _run_tool_agent(
     nudged = False
 
     for _ in range(MAX_TOOL_ROUNDS):
-        content, tool_calls, model = await chat_completion_with_tools(messages, TOOLS)
+        if emit is None:
+            content, tool_calls, model = await chat_completion_with_tools(messages, TOOLS)
+        else:
+            content, tool_calls, model = await _consume_stream(messages, TOOLS, emit)
         if not tool_calls:
             if box.trace or nudged:
                 if not content:
@@ -728,6 +856,11 @@ async def _run_tool_agent(
                 "content": "先检索再回答：请调用 search_posts 检索站内文章，找到依据后再给出结论。",
             })
             continue
+
+        if emit is not None and any(
+            tc["name"] in ("search_posts", "get_article_overview") for tc in tool_calls
+        ):
+            await emit({"event": "status", "data": {"text": "正在翻书架…"}})
 
         messages.append({
             "role": "assistant",
@@ -759,9 +892,11 @@ async def _run_tool_agent(
             })
     else:
         # 轮数上限用完仍在调工具：强制收尾，不再给工具
-        reply, model = await chat_completion(
-            messages + [{"role": "user", "content": "请基于已检索到的内容直接回答，不要再调用工具。"}]
-        )
+        final = messages + [{"role": "user", "content": "请基于已检索到的内容直接回答，不要再调用工具。"}]
+        if emit is None:
+            reply, model = await chat_completion(final)
+        else:
+            reply, _, model = await _consume_stream(final, [], emit)
 
     if not box.trace:
         # 端点把 tools 参数忽略了（始终不返回 tool_calls）：降级为旧的「先检索后生成」。
@@ -770,7 +905,11 @@ async def _run_tool_agent(
         if rows:
             box.register(rows)
         if box.best_score() >= RAG_MIN_SCORE:
-            reply, model = await chat_completion(build_messages(ctx, box.citations, input.message))
+            fallback = build_messages(ctx, box.citations, input.message)
+            if emit is None:
+                reply, model = await chat_completion(fallback)
+            else:
+                reply, _, model = await _consume_stream(fallback, [], emit)
         else:
             reply = no_hit_message(input.message)
 
@@ -818,7 +957,17 @@ async def _generate_reply(
     return content, model, False
 
 
-async def talk(session: AsyncSession, input: TalkInput) -> TalkResult:
+async def talk(
+    session: AsyncSession,
+    input: TalkInput,
+    emit: Callable[[dict], Awaitable[None]] | None = None,
+) -> TalkResult:
+    """一次完整问答：读上下文 → 生成 → 落库 → 返回结果。
+
+    emit 非空时走流式（SSE 路由用）：生成过程的 token/status 事件实时推给前端，
+    落库内容与返回值和整包版完全一致。注意 NPC 闲聊路径（rag=False）不产流——
+    流式路由只服务博客助手（恒为 rag=True），不为不可达路径付成本。
+    """
     agent = await _resolve_agent(session, input.agent_slug)
     session_id = f"{agent.slug}:{input.session_key}"
     message = input.message.strip()[:500]
@@ -869,9 +1018,11 @@ async def talk(session: AsyncSession, input: TalkInput) -> TalkResult:
                 else await retrieve(session, message, 4, about)
             )
         reply, model, is_mock = await _generate_reply(ctx, input, citations, overview)
+        if emit is not None:
+            await _typewriter(reply, emit)
     elif input.rag:
         # LLM 路径：模型自己决定检索什么、查几遍、记什么（Function Calling）
-        reply, model, citations, tool_trace, remembered = await _run_tool_agent(session, ctx, input)
+        reply, model, citations, tool_trace, remembered = await _run_tool_agent(session, ctx, input, emit)
         is_mock = False
     else:
         # NPC 闲聊路径：不挂工具，纯人格对话
