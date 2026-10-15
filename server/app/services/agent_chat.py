@@ -37,6 +37,11 @@ LONG_TERM_MEMORIES = 5
 USER_KEY = "owner"
 BLOG_SESSION = "blog"
 
+MAX_TOOL_ROUNDS = 3
+# 检索分数低于此值视为「基本没命中」。实测：真实提问 1.5~3.8，
+# 与词库偶然撞上的闲话只有 0.57（单 token 误命中），1.0 能把两者分开
+RAG_MIN_SCORE = 1.0
+
 LLM_BASE_URL = ""
 LLM_API_KEY = ""
 LLM_MODEL = "gpt-4o-mini"
@@ -96,6 +101,27 @@ def extract_fact(message: str) -> str | None:
     if not FACT_PREFIX_RE.search(text):
         return None
     return text
+
+
+def valid_tool_fact(text: str) -> bool:
+    """remember_fact 工具的事实校验：比 extract_fact 宽松一档。
+
+    正则路径怕误记，要求「我 + 特定动词」开头；工具路径是模型自己判断过才调用的，
+    这里只挡明显的疑问句和异常长度——否则「俺叫小王」这类表达又会被漏掉。
+    """
+    text = re.sub(r"\s+", " ", text.strip())
+    if len(text) < 4 or len(text) > 60:
+        return False
+    if "?" in text or "？" in text:
+        return False
+    return not re.search(r"(吗|呢|吧)[。！!]?$", text)
+
+
+def no_hit_message(message: str) -> str:
+    return (
+        f"我把图书馆的书架翻了一遍，没有找到和「{clip(message, 14)}」直接相关的内容。"
+        "换一个更具体的说法试试，或者从《知识地图总览》开始逛。"
+    )
 
 
 def is_overview_ask(message: str) -> bool:
@@ -276,6 +302,97 @@ async def chat_completion(messages: list[dict]) -> tuple[str, str]:
     return content, LLM_MODEL
 
 
+# ────────────────────────────────────────────── Function Calling（LLM 模式专用）
+
+
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_posts",
+            "description": "检索站内文章片段，返回带编号 [n] 的原文摘录。回答任何关于文章内容的问题前必须先调用，可以换词重查。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "检索词：从用户问题里提取的关键词或短语"}
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_article_overview",
+            "description": "获取某篇文章的概览（开头与主要小节）。用户问「这篇/某篇文章讲了什么」时使用。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "slug": {"type": "string", "description": "文章 slug，如 juc-线程池核心参数"}
+                },
+                "required": ["slug"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "remember_fact",
+            "description": "把用户用陈述句说出的、关于自己的事实存入长期记忆（姓名、在学什么、做什么工作等）。疑问句不要调用。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "fact": {"type": "string", "description": "事实本身，保留用户原话，60 字以内"}
+                },
+                "required": ["fact"],
+            },
+        },
+    },
+]
+
+
+async def chat_completion_with_tools(messages: list[dict], tools: list[dict]) -> tuple[str, list[dict], str]:
+    """带 tools 的 chat completion，返回 (正文, 工具调用列表, 模型名)。
+
+    工具调用归一化成 [{"id", "name", "args"}]；arguments 解析失败按空参数处理，
+    让工具侧报错回填给模型，比整轮失败更稳。
+    """
+    if not llm_configured():
+        raise RuntimeError("LLM 未配置：缺少 LLM_BASE_URL 或 LLM_API_KEY")
+    async with httpx.AsyncClient(timeout=LLM_TIMEOUT) as client:
+        res = await client.post(
+            f"{LLM_BASE_URL.rstrip('/')}/chat/completions",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {LLM_API_KEY}",
+            },
+            json={
+                "model": LLM_MODEL,
+                "messages": messages,
+                "temperature": 0.8,
+                "tools": tools,
+                "tool_choice": "auto",
+            },
+        )
+    if res.status_code >= 400:
+        raise RuntimeError(f"LLM 返回 {res.status_code}：{res.text[:200]}")
+    data = res.json()
+    message = (data.get("choices") or [{}])[0].get("message") or {}
+    tool_calls: list[dict] = []
+    for call in message.get("tool_calls") or []:
+        fn = call.get("function") or {}
+        raw = fn.get("arguments")
+        if isinstance(raw, str):
+            try:
+                args = json.loads(raw) if raw.strip() else {}
+            except json.JSONDecodeError:
+                args = {}
+        else:
+            args = raw if isinstance(raw, dict) else {}
+        tool_calls.append({"id": call.get("id") or "", "name": fn.get("name") or "", "args": args})
+    return (message.get("content") or "").strip(), tool_calls, LLM_MODEL
+
+
 # ────────────────────────────────────────────── 记忆与关系的读写
 
 
@@ -449,10 +566,7 @@ def mock_overview_reply(citations: list[dict]) -> str:
 
 def mock_rag_reply(citations: list[dict], message: str) -> str:
     if not citations:
-        return (
-            f"我把图书馆的书架翻了一遍，没有找到和「{clip(message, 14)}」直接相关的内容。"
-            "换一个更具体的说法试试，或者从《知识地图总览》开始逛。"
-        )
+        return no_hit_message(message)
     top = citations[0]
     others = citations[1:]
     other_posts = {c["post_title"] for c in others} - {top["post_title"]}
@@ -466,6 +580,201 @@ def mock_rag_reply(citations: list[dict], message: str) -> str:
         f"最贴近的是《{top['post_title']}》里「{short_heading(top['heading'])}」这一段：\n\n"
         f"{top['quote']}\n\n{tail}\n（还没接入语言模型，所以直接给你原文节选，而不是我的转述。）"
     )
+
+
+# ────────────────────────────────────────────── Function Calling 执行体
+
+
+@dataclass
+class ToolBox:
+    """一次问答内、跨工具调用共享的引用编号本。
+
+    同一个 chunk 被多次检索只编号一次（模型无需重复看同一段原文）；
+    编号从 1 开始连续递增，最终回答里的 [n] 与 citations 落库顺序逐字对齐。
+    """
+
+    session: AsyncSession
+    agent_id: int
+    about: str | None = None
+    cited: dict[int, int] = field(default_factory=dict)
+    citations: list[dict] = field(default_factory=list)
+    trace: list[dict] = field(default_factory=list)
+    remembered: list[str] = field(default_factory=list)
+
+    def register(self, rows: list[dict]) -> list[dict]:
+        new = []
+        for row in rows:
+            if row["chunk_id"] in self.cited:
+                continue
+            self.cited[row["chunk_id"]] = len(self.citations) + 1
+            self.citations.append(row)
+            new.append(row)
+        return new
+
+    def best_score(self) -> float:
+        return max((c["score"] for c in self.citations), default=0.0)
+
+    def _format_new(self, rows: list[dict], label: str) -> tuple[str, int]:
+        new = self.register(rows)
+        if not new:
+            return "没有新的相关内容（此前检索到的结果已在上文，不要重复引用）。", 0
+        blocks = [
+            f"[{self.cited[r['chunk_id']]}] 《{r['post_title']}》「{short_heading(r['heading'])}」：\n"
+            f"{clip(r['quote'], 300)}"
+            for r in new
+        ]
+        return "\n\n".join(blocks) + f"\n\n（{label}到 {len(new)} 条新结果）", len(new)
+
+    async def run(self, name: str, args: dict) -> str:
+        started = time.monotonic()
+        hits = 0
+        if name == "search_posts":
+            query = str(args.get("query") or "").strip()
+            if not query:
+                text = "参数缺失：query 不能为空。"
+            else:
+                text, hits = self._format_new(
+                    await retrieve(self.session, query, 4, self.about), "检索"
+                )
+        elif name == "get_article_overview":
+            slug = str(args.get("slug") or "").strip() or self.about or ""
+            # 「只搜本文」是用户开关，属于硬约束：模型传别的 slug 也按当前这篇算
+            if self.about and slug != self.about:
+                slug = self.about
+            if not slug:
+                text = "参数缺失：slug 不能为空。"
+            else:
+                rows = await article_overview(self.session, slug, 3)
+                text, hits = self._format_new(rows, "概览") if rows else f"没有找到《{slug}》这篇文章。"
+        elif name == "remember_fact":
+            fact = re.sub(r"\s+", " ", str(args.get("fact") or "").strip())
+            if not valid_tool_fact(fact):
+                text = "这条不像可记忆的事实（疑问句或长度异常），已跳过。"
+            else:
+                exists = (
+                    await self.session.execute(
+                        select(AgentMemory.id).where(
+                            AgentMemory.agent_id == self.agent_id,
+                            AgentMemory.user_key == USER_KEY,
+                            AgentMemory.content == fact,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if exists is not None:
+                    text = f"这条已经记过了：{fact}"
+                else:
+                    self.session.add(
+                        AgentMemory(
+                            agent_id=self.agent_id,
+                            user_key=USER_KEY,
+                            memory_kind="long",
+                            content=fact,
+                            importance=0.8,
+                        )
+                    )
+                    self.remembered.append(fact)
+                    text = f"已记住：{fact}"
+                    hits = 1
+        else:
+            text = f"未知工具：{name}"
+        self.trace.append(
+            {"tool": name, "args": args, "hits": hits, "ms": int((time.monotonic() - started) * 1000)}
+        )
+        return text
+
+
+def build_tool_messages(ctx: ReplyContext, message: str) -> list[dict]:
+    lines = persona_lines(ctx) + [
+        "你是知识站助手，只依据检索到的文章片段回答问题。规则：",
+        "1. 回答任何关于站内内容的问题前，必须先调用 search_posts 或 get_article_overview 检索；",
+        "2. 先用一句话给结论，再给依据；引用某段时在句末标出它的编号，例如 [1]；",
+        "3. 片段里没有的内容，直接说不确定，不要编造；",
+        "4. 用户问题缺少关键信息时（例如没说是哪篇文章），先用一句话追问，不要假设；",
+        "5. 用户用陈述句说出关于自己的事实时，调用 remember_fact 记下；疑问句不要记；",
+        "6. 回答保持口语化，2-4 句，不要用列表和标题。",
+    ]
+    history = [
+        {"role": "assistant" if t["role"] == "assistant" else "user", "content": t["content"]}
+        for t in ctx.recent
+    ]
+    return [{"role": "system", "content": "\n".join(lines)}, *history, {"role": "user", "content": message}]
+
+
+async def _run_tool_agent(
+    session: AsyncSession, ctx: ReplyContext, input: TalkInput
+) -> tuple[str, str, list[dict], list[dict], list[str]]:
+    """LLM 模式：模型自己决定检索什么、查几遍、记什么。
+
+    与旧路径的唯一区别是「意图识别」从正则挪到了模型。工具往返全部在内存里完成，
+    不落 agent_turns（那会污染短期记忆的「近 8 轮」），只把 trace 摘要挂在最终轮次上。
+    """
+    box = ToolBox(session=session, agent_id=ctx.agent.id, about=input.about)
+    messages = build_tool_messages(ctx, input.message)
+    reply = ""
+    nudged = False
+
+    for _ in range(MAX_TOOL_ROUNDS):
+        content, tool_calls, model = await chat_completion_with_tools(messages, TOOLS)
+        if not tool_calls:
+            if box.trace or nudged:
+                if not content:
+                    raise RuntimeError("LLM 返回内容为空")
+                reply = content
+                break
+            # 一次都没检索就想回答：提醒它先查（只提醒一次，避免端点忽视 tools 时烧穿轮数）
+            nudged = True
+            messages.append({
+                "role": "user",
+                "content": "先检索再回答：请调用 search_posts 检索站内文章，找到依据后再给出结论。",
+            })
+            continue
+
+        messages.append({
+            "role": "assistant",
+            "content": content,
+            "tool_calls": [
+                {
+                    "id": tc["id"],
+                    "type": "function",
+                    "function": {
+                        "name": tc["name"],
+                        "arguments": json.dumps(tc["args"], ensure_ascii=False),
+                    },
+                }
+                for tc in tool_calls
+            ],
+        })
+        for tc in tool_calls:
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "content": await box.run(tc["name"], tc["args"]),
+            })
+
+        if box.citations and box.best_score() < RAG_MIN_SCORE:
+            # 检索基本没命中：不再换词重试，提醒它诚实收尾
+            messages.append({
+                "role": "user",
+                "content": "检索结果都不太相关。请直接告诉用户没找到相关内容，建议他换个更具体的说法，不要编造。",
+            })
+    else:
+        # 轮数上限用完仍在调工具：强制收尾，不再给工具
+        reply, model = await chat_completion(
+            messages + [{"role": "user", "content": "请基于已检索到的内容直接回答，不要再调用工具。"}]
+        )
+
+    if not box.trace:
+        # 端点把 tools 参数忽略了（始终不返回 tool_calls）：降级为旧的「先检索后生成」。
+        # 阈值与主路径一致：弱命中不烧 LLM，直接给兜底文案
+        rows = await retrieve(session, input.message, 4, input.about)
+        if rows:
+            box.register(rows)
+        if box.best_score() >= RAG_MIN_SCORE:
+            reply, model = await chat_completion(build_messages(ctx, box.citations, input.message))
+        else:
+            reply = no_hit_message(input.message)
+
+    return reply, model, box.citations, box.trace, box.remembered
 
 
 # ────────────────────────────────────────────── 对外入口
@@ -493,6 +802,7 @@ class TalkResult:
     model: str
     mock: bool
     latency_ms: int
+    tool_trace: list[dict] = field(default_factory=list)
 
 
 async def _generate_reply(
@@ -536,16 +846,6 @@ async def talk(session: AsyncSession, input: TalkInput) -> TalkResult:
         next_stage_at=next_stage_at(score),
     )
 
-    about = input.about
-    overview = input.rag and about is not None and is_overview_ask(message)
-    citations: list[dict] = []
-    if input.rag:
-        citations = (
-            await article_overview(session, about, 3)
-            if overview and about
-            else await retrieve(session, message, 4, about)
-        )
-
     ctx = ReplyContext(
         agent=agent,
         affinity=affinity,
@@ -555,7 +855,28 @@ async def talk(session: AsyncSession, input: TalkInput) -> TalkResult:
     )
 
     started = time.monotonic()
-    reply, model, is_mock = await _generate_reply(ctx, input, citations, overview)
+    citations: list[dict] = []
+    tool_trace: list[dict] = []
+    remembered = False
+    if not llm_configured():
+        # Mock 路径：正则意图 + 预检索，三分支回复（无 Key 时的完整演示，行为不变）
+        about = input.about
+        overview = input.rag and about is not None and is_overview_ask(message)
+        if input.rag:
+            citations = (
+                await article_overview(session, about, 3)
+                if overview and about
+                else await retrieve(session, message, 4, about)
+            )
+        reply, model, is_mock = await _generate_reply(ctx, input, citations, overview)
+    elif input.rag:
+        # LLM 路径：模型自己决定检索什么、查几遍、记什么（Function Calling）
+        reply, model, citations, tool_trace, remembered = await _run_tool_agent(session, ctx, input)
+        is_mock = False
+    else:
+        # NPC 闲聊路径：不挂工具，纯人格对话
+        reply, model, _ = await chat_completion(build_messages(ctx, [], input.message))
+        is_mock = False
     latency_ms = int((time.monotonic() - started) * 1000)
 
     delta = affinity_delta(message)
@@ -572,6 +893,7 @@ async def talk(session: AsyncSession, input: TalkInput) -> TalkResult:
     assistant_turn = AgentTurn(
         session_id=session_id, agent_id=agent.id, role="assistant", content=reply,
         affinity_delta=delta, latency_ms=latency_ms, model=model,
+        tool_trace=json.dumps(tool_trace, ensure_ascii=False),
     )
     session.add(assistant_turn)
     await session.flush()
@@ -586,7 +908,9 @@ async def talk(session: AsyncSession, input: TalkInput) -> TalkResult:
             )
         )
 
-    fact = extract_fact(message)
+    # LLM 模式下事实抽取由 remember_fact 工具负责（模型已判断过才调用）；
+    # Mock 模式没有模型，仍走正则。工具记过就不再正则重复记。
+    fact = None if remembered else extract_fact(message)
     if fact:
         exists = (
             await session.execute(
@@ -637,6 +961,7 @@ async def talk(session: AsyncSession, input: TalkInput) -> TalkResult:
         model=model,
         mock=is_mock,
         latency_ms=latency_ms,
+        tool_trace=tool_trace,
     )
 
 
@@ -690,6 +1015,7 @@ async def read_log(session: AsyncSession, session_key: str, agent_slug: str, lim
                 "model": t.model,
                 "createdAt": t.created_at,
                 "sources": by_turn.get(t.id, []),
+                "toolTrace": json.loads(t.tool_trace) if t.tool_trace else [],
             }
             for t in turns
         ],

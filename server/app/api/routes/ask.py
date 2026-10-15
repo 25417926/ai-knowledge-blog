@@ -41,6 +41,7 @@ def _result_view(result: svc.TalkResult) -> dict:
         "model": result.model,
         "mock": result.mock,
         "latencyMs": result.latency_ms,
+        "toolTrace": result.tool_trace,
     }
 
 

@@ -138,6 +138,7 @@ CREATE TABLE IF NOT EXISTS agent_turns (
   affinity_delta INTEGER NOT NULL DEFAULT 0,
   latency_ms     INTEGER NOT NULL DEFAULT 0,
   model          TEXT    NOT NULL DEFAULT '',
+  tool_trace     TEXT    NOT NULL DEFAULT '',
   created_at     TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 

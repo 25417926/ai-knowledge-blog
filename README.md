@@ -121,9 +121,20 @@ content/
 **Agent 内核。** `agents` 系列表（角色 / 记忆 / 好感度 / 会话 / 日志 / 引用）是
 全站 AI 助手的地基，博客助手「知行」见 `content/town/agents.json`
 里 `meta.blogAssistant = true`。内核完整迁到了 `server/app/services/agent_chat.py`，
-四个行为细节被刻意保留：好感度只增不减（单轮 +1~4）、长期记忆只认第一人称陈述句
-（先排疑问句再匹配句式，否则提问会被当成事实存进去）、短期记忆直接读最近 8 轮
+四个行为细节被刻意保留：好感度只增不减（单轮 +1~4）、短期记忆直接读最近 8 轮
 `agent_turns`、Mock 三分支且明说「这是节选不是转述」。
+
+**意图识别归模型，不归正则。** 配置了 LLM 时，助手跑 Function Calling 循环
+（`agent_chat.py` 的 `_run_tool_agent`）：模型自己决定调 `search_posts` /
+`get_article_overview` / `remember_fact` 中的哪个、换词重查几次（上限 3 轮）。
+工具返回的片段带连续编号 `[n]`，回答里的编号与 `citations` 落库顺序逐字对齐；
+「只搜本文」是工具层硬约束，模型传别的 slug 也会被拉回当前篇。
+未配置 LLM 时回落 Mock 路径，仍用正则分流（`OVERVIEW_RE` 等）——两路并存，
+Mock 行为与改造前完全一致。每次工具调用记录在 `agent_turns.tool_trace`
+（JSON：工具名 / 参数 / 命中数 / 耗时），`GET /api/ask` 的 `toolTrace` 字段可读。
+检索分数低于 `RAG_MIN_SCORE`（实测校准值 1.0）视为没命中：不再换词重试，
+也不烧最后一次 LLM 调用，直接诚实收尾；端点若忽视 `tools` 参数，
+自动降级为「先检索后生成」并套用同一阈值。
 
 **前后端边界靠契约，不靠约定。** 前端唯一的数据出口是 `src/lib/api.ts`，
 页面只 import 它；后端用 Pydantic 的 `alias_generator` 把 snake_case 输出成 camelCase，
@@ -180,13 +191,16 @@ content/
 - [x] 阶段 4：Godot 2D 小镇（已上线后于 2026-10-14 整体下线，备份见文首说明）
 - [x] 阶段 6：前后端拆分 —— 数据层 / RAG / Agent 内核迁至 FastAPI，Next 只做前端
       （typed fetch 客户端 + camelCase 契约 + Swagger 文档，Node 侧数据层全删）
+- [x] 阶段 6b：Function Calling 改造 —— 意图识别从正则挪到模型（工具循环 ≤3 轮、
+      引用连续编号、about 硬约束、tool_trace 落库、阈值兜底、无 tools 端点降级），
+      Mock 路径行为不变
 - [ ] 阶段 5：后台写作与登录 · Wiki 自动沉淀与出处回链 · 实时日志面板
 
 ## 路线图（按依赖顺序）
 
 1. **接入真实语言模型。** 在 `server/.env` 填 `LLM_BASE_URL` 与 `LLM_API_KEY`（两者都需要），
    即可从 Mock 切到真实回答；协议是 OpenAI 兼容格式，换 baseURL 就能接 DeepSeek / 通义 / 智谱 / Ollama。
-   提示词里已经要求模型「先给结论、再标引用 [n]」，无需改业务代码。
+   切到真实模型后，Function Calling 循环自动生效（见「设计原则」），无需改业务代码。
 2. **向量检索。** 导入 Vault 时可选生成 embedding 写入 `chunks.embedding`，
    与现有关键词检索做混合排序（关键词保精度、向量保召回）。
 3. **沉淀闭环。** 把问答日志里高频但站内没有的内容，提示补写成新笔记，

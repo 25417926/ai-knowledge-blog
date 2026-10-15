@@ -179,6 +179,7 @@ class AgentTurn(Base):
     affinity_delta: Mapped[int] = mapped_column(Integer, default=0)
     latency_ms: Mapped[int] = mapped_column(Integer, default=0)
     model: Mapped[str] = mapped_column(String, default="")
+    tool_trace: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default="datetime('now')")
 
 

@@ -8,6 +8,26 @@
 
 ---
 
+## ⚠️ 2026-10-15 勘误（晚于上方快照，以本节为准）
+
+本文快照生成于**前后端拆分之前**，以下事实已过期，请以 README「设计原则」为当前准绳：
+
+1. **架构已拆分**：Next.js 只做前端，数据层 / RAG / Agent 内核迁至 `server/`
+   （FastAPI + SQLAlchemy + aiosqlite）。`node:sqlite`、`src/lib/` 下 9 个数据层文件、
+   `src/app/api`、`scripts/` 已全部删除；DDL 唯一出处是 `server/app/schema.sql`。
+2. **启动方式已变**：`cd server && python -m scripts.init_db && python -m uvicorn app.main:app --reload`
+   + 另开终端 `npm run dev`。venv 在 `~/.workbuddy/binaries/python/envs/blog-server`。
+3. **问答接口已变**：`POST /api/ask`（后端直连），不再是 `/api/blog/ask`。
+4. **Function Calling 已上线（阶段 6b）**：配置 LLM 后意图识别由模型通过工具循环完成
+   （`search_posts` / `get_article_overview` / `remember_fact`，≤3 轮），
+   引用连续编号、`about` 硬约束、`agent_turns.tool_trace` 落库、阈值兜底（1.0）、
+   无 tools 端点自动降级。**Mock 路径行为与拆分前完全一致**（M1-M6 回归通过）。
+5. **快照中的数字**（提交号、`src/` 行数、76 轮问答等）为 2026-10-15 上午的值，仅作趋势参考。
+
+下文各节保留原样，供对照演进用。
+
+---
+
 ## 0. 一句话现状
 
 博客端**主干已全部交付并上线 GitHub**（阅读体验、RAG 问答、Agent 内核、SEO 都在）。
