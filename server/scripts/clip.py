@@ -13,8 +13,9 @@
         Mock 总结，并明说「这是节选不是转述」；
   入库：写 content/sample-vault/clippings/ 下的 Obsidian 格式笔记。
         文件名带 clip- 前缀——手写笔记是裸标题，撞名时覆盖的会是收藏稿，
-        不会动到自己的笔记。原文同时渲染成 PDF 存档进 clippings.pdf 列，
-        笔记里列出「总结自哪些文档」并给同源下载链接；
+        不会动到自己的笔记。原文渲染成 PDF 存档进 clippings.pdf 列，笔记里
+        只留三段式总结 + 下载链接——原文全文有 PDF 这一份就够，再贴一遍
+        正文等于同一份内容存两份；PDF 生成失败时才退回把原文贴进笔记。
   索引：直接复用 scripts.init_db.import_vault，零改动，收藏即进 RAG。
 """
 
@@ -560,11 +561,15 @@ def write_note(
         # 同源相对链接：Next 侧把 /api 代理到后端，博客里点开就是 PDF
         pdf_section = (
             "## 原文 PDF\n\n"
-            "本文的 AI 总结自以下文档；PDF 是收藏时留存的原文存档，原链接失效也能看：\n\n"
+            "本文的 AI 总结自以下文档；PDF 是收藏时留存的原文全文，原链接失效也能看：\n\n"
             f"- 《{title}》· {chars} 字 · [打开原文 PDF](/api/clippings/pdf?url={quote(url)})\n\n"
         )
+        # 原文只留 PDF 这一份：笔记里再贴一遍，读的时候同一篇内容要读两遍
+        original_section = ""
     else:
-        pdf_section = "## 原文 PDF\n\n（PDF 存档生成失败，仅保留下方原文文本。）\n\n"
+        pdf_section = "## 原文 PDF\n\n（存档生成失败，原文全文见下方。）\n\n"
+        # 存档没成，原文就是唯一副本，必须留在笔记里
+        original_section = f"## 原文\n\n{text}\n"
     note = frontmatter.Post(
         content=(
             f"# {title}\n\n"
@@ -572,7 +577,7 @@ def write_note(
             "本文由收藏管道自动整理\n\n"
             f"## 三段式总结\n\n{summary_md}\n\n"
             f"{pdf_section}"
-            f"## 原文\n\n{text}\n"
+            f"{original_section}"
         ),
         title=title,
         category="clippings",
