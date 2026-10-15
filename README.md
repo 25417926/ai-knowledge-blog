@@ -98,7 +98,7 @@ src/                       前端（Next.js App Router）
     site.ts          站点文案与个人信息的唯一出处
   components/
     BlogAssistant.tsx   全站浮动的博客助手（带出处卡片，直连后端 /api/ask）
-    Pet.tsx             鲸鱼娘桌宠（可拖动、能聊天、能喂鱼干、没人理会打盹）
+    Pet.tsx             鲸鱼娘桌宠（可拖动、喂鱼干、没人理会打盹；不接问答）
     Carousel.tsx        卡片轮播（首页两组复用）
     Toc.tsx             正文目录（滚动高亮）
     CodeCopy.tsx        代码块的语言标签 / 复制 / 行号
@@ -158,6 +158,12 @@ content/
 里 `meta.blogAssistant = true`。内核完整迁到了 `server/app/services/agent_chat.py`，
 四个行为细节被刻意保留：好感度只增不减（单轮 +1~4）、短期记忆直接读最近 8 轮
 `agent_turns`、Mock 三分支且明说「这是节选不是转述」。
+
+**两个前景组件分工：宠物只陪伴，知行只问答。** 左下角的桌宠「鱼干」不接问答，
+它只有拖拽、喂鱼干、打盹、自言自语四种互动，面板里没有输入框。这不只是为了不重复：
+两者曾经都在调 `/api/ask` 里的同一个 agent（`assistant`）和同一个会话（`blog`），
+于是从宠物框问的话会算进知行的上下文、记忆与好感度里，两边并发提问还会互相顶掉轮次。
+站内问答因此有且只有一个入口——右下角的「知行」（带出处卡片、工具链与「只搜本文」开关）。
 
 **意图识别归模型，不归正则。** 配置了 LLM 时，助手跑 Function Calling 循环
 （`agent_chat.py` 的 `_run_tool_agent`）：模型自己决定调 `search_posts` /

@@ -16,27 +16,31 @@ const PET_H = 80;
 /** 边缘留白上限。宽高都按这个保守值算，免得算出屏 */
 const EDGE = PET_H + 16;
 
-type ChatLine = { id: number; text: string; mine: boolean };
-type Mood = 'idle' | 'smile' | 'sleepy' | 'think' | 'happy-a' | 'happy-b';
+/** 它自言自语的一句。宠物只有「它说」这一侧，不接问答，所以不用区分说话人 */
+type Line = { id: number; text: string };
+type Mood = 'idle' | 'smile' | 'sleepy' | 'happy-a' | 'happy-b';
 
 /**
- * 六张表情各归其位。素材是一只鲸鱼娘的六个表情，落到状态上：
- *   待机 / 打开对话 / 打盹 / 提问中 / 喂食两帧（交替成小动画）
+ * 五张表情各归其位。素材是一只鲸鱼娘的六个表情，落到状态上：
+ *   待机 / 打开面板 / 打盹 / 喂食两帧（交替成小动画）
+ * think.webp 留在 public/pets 里没被引用 —— 撤掉问答后就没有「思考中」这个状态了。
  * 换素材只要换这里的文件名，状态逻辑不用动。
  */
 const FACES: Record<Mood, string> = {
   idle: '/pets/idle.webp',
   smile: '/pets/smile.webp',
   sleepy: '/pets/sleepy.webp',
-  think: '/pets/think.webp',
   'happy-a': '/pets/happy-a.webp',
   'happy-b': '/pets/happy-b.webp',
 };
 
 /**
- * 桌宠。
+ * 桌宠「鱼干」。
  *
- * 四件事凑成一个「活物」的感觉：能拖走、点它说话、喂它鱼干、没人理就打盹。
+ * 它只负责陪伴：能拖走、点它开面板听它念叨、喂它鱼干、没人理就打盹。
+ * **不接问答** —— 站内问答统一归右下的「知行」。宠物自己也挂一个输入框，
+ * 只会把同一份会话、记忆和好感度搅在一起（曾经两边都在调 /api/ask 的
+ * assistant 身份，等于两个入口共用一个人格）。
  * 位置与喂食时间都记在 localStorage —— 刷新之后它还在你放下的地方，鱼干也不会重新变满。
  */
 export function Pet() {
@@ -44,9 +48,7 @@ export function Pet() {
   // 默认落在左下角上方一点：右下角是博客助手，正左下角则是开发时的 Next 调试按钮
   const [pos, setPos] = useState({ x: 20, y: 88 });
   const [open, setOpen] = useState(false);
-  const [lines, setLines] = useState<ChatLine[]>([]);
-  const [draft, setDraft] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [lines, setLines] = useState<Line[]>([]);
   const [hearts, setHearts] = useState<number[]>([]);
   const [cooldown, setCooldown] = useState(0);
   const [dozing, setDozing] = useState(false);
@@ -103,17 +105,17 @@ export function Pet() {
   }, [cheering]);
 
   useEffect(() => {
-    if (busy || open) {
+    if (open) {
       setDozing(false);
       return;
     }
     const timer = setTimeout(() => setDozing(true), DOZE_MS);
     return () => clearTimeout(timer);
-  }, [busy, open, idleTick]);
+  }, [open, idleTick]);
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
-  }, [lines, busy]);
+  }, [lines]);
 
   const clamp = useCallback((x: number, y: number) => {
     const limitX = typeof window === 'undefined' ? x : window.innerWidth - EDGE;
@@ -181,49 +183,24 @@ export function Pet() {
     setCooldown(COOLDOWN_SECONDS);
     setIdleTick((value) => value + 1);
 
+    // 喂它就是听它念叨一句 —— 宠物不接问答，所以「它说的话」只有这一种来源
     const line = site.pet.lines[Math.floor(Math.random() * site.pet.lines.length)];
-    setLines((prev) => [...prev, { id: now, text: line, mine: false }]);
+    setLines((prev) => [...prev, { id: now, text: line }]);
     setHearts((prev) => [...prev, now]);
     setTimeout(() => setHearts((prev) => prev.filter((id) => id !== now)), 1500);
   };
 
-  const ask = async () => {
-    const message = draft.trim();
-    if (message === '' || busy) return;
-    setDraft('');
-    setLines((prev) => [...prev, { id: Date.now(), text: message, mine: true }]);
-    setBusy(true);
-    try {
-      const res = await fetch('/api/ask', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message }),
-      });
-      const data = (await res.json()) as { reply?: string; error?: string };
-      setLines((prev) => [
-        ...prev,
-        { id: Date.now() + 1, text: data.reply ?? data.error ?? '出了点问题。', mine: false },
-      ]);
-    } catch {
-      setLines((prev) => [...prev, { id: Date.now() + 2, text: '连不上服务器。', mine: false }]);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   if (!mounted) return null;
 
-  const mood: Mood = busy
-    ? 'think'
-    : cheering
-      ? flip
-        ? 'happy-b'
-        : 'happy-a'
-      : dozing
-        ? 'sleepy'
-        : open
-          ? 'smile'
-          : 'idle';
+  const mood: Mood = cheering
+    ? flip
+      ? 'happy-b'
+      : 'happy-a'
+    : dozing
+      ? 'sleepy'
+      : open
+        ? 'smile'
+        : 'idle';
 
   return (
     <>
@@ -246,11 +223,11 @@ export function Pet() {
         ))}
       </div>
 
-      {/* 对话面板 */}
+      {/* 陪伴面板：全站只剩它自己念叨 + 喂食。没有输入框——问答归右下的知行 */}
       {open && (
         <div
           role="dialog"
-          aria-label={`${site.pet.name} 的对话`}
+          aria-label={`${site.pet.name} 的面板`}
           className="glass fixed z-40 flex w-[min(300px,calc(100vw-32px))] flex-col rounded-2xl border border-ink-line p-4 shadow-lg"
           style={{ left: pos.x, bottom: pos.y + PET_H + 10 }}
         >
@@ -262,7 +239,7 @@ export function Pet() {
             <button
               type="button"
               onClick={() => setOpen(false)}
-              aria-label="关闭对话"
+              aria-label="收起面板"
               className="grid h-6 w-6 place-items-center rounded-full text-ink-dim transition-colors hover:text-ink-text"
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
@@ -278,54 +255,32 @@ export function Pet() {
             {lines.map((line) => (
               <p
                 key={line.id}
-                className={
-                  line.mine
-                    ? 'ml-auto max-w-[86%] rounded-xl bg-accent px-3 py-2 text-[12.5px] leading-6 text-white'
-                    : 'max-w-[92%] whitespace-pre-wrap rounded-xl border border-ink-line bg-ink-soft px-3 py-2 text-[12.5px] leading-6 text-ink-text'
-                }
+                className="max-w-[92%] rounded-xl border border-ink-line bg-ink-soft px-3 py-2 text-[12.5px] leading-6 text-ink-text"
               >
                 {line.text}
               </p>
             ))}
-            {busy && <p className="text-[12px] text-ink-dim">翻书架中…</p>}
-          </div>
-
-          <div className="mt-3 flex items-center gap-2">
-            <input
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') void ask();
-              }}
-              placeholder="问我点什么…"
-              aria-label="向宠物提问"
-              className="min-w-0 flex-1 rounded-full border border-ink-line bg-ink-panel/60 px-3 py-2 text-[12.5px] text-ink-text outline-none placeholder:text-ink-dim focus:border-accent/60"
-            />
-            <button
-              type="button"
-              onClick={() => void ask()}
-              disabled={busy}
-              className="shrink-0 rounded-full bg-accent px-3 py-2 text-[12.5px] font-medium text-white disabled:opacity-50"
-            >
-              问
-            </button>
           </div>
 
           <button
             type="button"
             onClick={feed}
             disabled={cooldown > 0}
-            className="mt-2 rounded-full border border-ink-line px-3 py-1.5 text-[11.5px] text-ink-dim transition-colors hover:border-accent/60 hover:text-ink-text disabled:opacity-50"
+            className="mt-3 rounded-full border border-ink-line px-3 py-1.5 text-[11.5px] text-ink-dim transition-colors hover:border-accent/60 hover:text-ink-text disabled:opacity-50"
           >
             {cooldown > 0 ? `鱼干冷却中 ${cooldown}s` : '喂一条小鱼干'}
           </button>
+
+          <p className="mt-2 text-[11px] leading-5 text-ink-dim/80">
+            我不答题。想问站里的内容，右下角找知行。
+          </p>
         </div>
       )}
 
-      {/* 宠物本体：可拖，点击开合对话 */}
+      {/* 宠物本体：可拖，点击开合面板 */}
       <button
         type="button"
-        aria-label={open ? '收起桌宠对话' : `和${site.pet.name}说话`}
+        aria-label={open ? `收起${site.pet.name}的面板` : `打开${site.pet.name}的面板`}
         aria-expanded={open}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
