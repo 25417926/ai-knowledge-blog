@@ -95,7 +95,7 @@ src/                       前端（Next.js App Router）
     site.ts          站点文案与个人信息的唯一出处
   components/
     BlogAssistant.tsx   全站浮动的博客助手（带出处卡片，直连后端 /api/ask）
-    CatPet.tsx          像素猫桌宠（可拖动、能聊天、能喂鱼干）
+    Pet.tsx             鲸鱼娘桌宠（可拖动、能聊天、能喂鱼干、没人理会打盹）
     Carousel.tsx        卡片轮播（首页两组复用）
     Toc.tsx             正文目录（滚动高亮）
     CodeCopy.tsx        代码块的语言标签 / 复制 / 行号
@@ -214,7 +214,7 @@ Mock 与闲聊路径没有工具调用，就什么都不画，不表演一段假
 - [x] 阶段 3b：Agent 内核（短期/长期记忆、好感度、实时日志）
 - [x] 阶段 3c：内容站主干复刻 —— 首页卡片墙、归档双视图、文章详情增强
       （Shiki 代码高亮 / 目录 / 灯箱 / 上下篇）、项目 / 说说 / 杂谈 / 关于四个路由、
-      像素猫桌宠、SEO（robots / sitemap / RSS / JSON-LD）
+      鲸鱼娘桌宠、SEO（robots / sitemap / RSS / JSON-LD）
 - [x] 阶段 4：Godot 2D 小镇（已上线后于 2026-10-14 整体下线，备份见文首说明）
 - [x] 阶段 6：前后端拆分 —— 数据层 / RAG / Agent 内核迁至 FastAPI，Next 只做前端
       （typed fetch 客户端 + camelCase 契约 + Swagger 文档，Node 侧数据层全删）

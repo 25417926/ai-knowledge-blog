@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 import AmbientBackdrop from '@/components/AmbientBackdrop';
 import { BlogAssistant } from '@/components/BlogAssistant';
-import { CatPet } from '@/components/CatPet';
+import { Pet } from '@/components/Pet';
 import { Danmaku } from '@/components/Danmaku';
 import { SiteFooter } from '@/components/SiteFooter';
 import { SiteHeader } from '@/components/SiteHeader';
@@ -57,7 +57,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <div id="main">{children}</div>
         <SiteFooter />
         <BlogAssistant />
-        <CatPet />
+        <Pet />
       </body>
     </html>
   );

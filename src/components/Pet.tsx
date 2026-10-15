@@ -3,63 +3,43 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { site } from '@/lib/site';
 
+// 键名沿用 cat-*：改名会让老访客存过的「宠物位置 / 鱼干冷却」一起丢掉，不值当
 const POS_KEY = 'town:cat-pos';
 const FED_KEY = 'town:cat-fed-at';
 /** 喂食冷却：纯前端限制，目的是让它像个活物而不是按钮 */
 const COOLDOWN_SECONDS = 30;
+/** 多久没人理就开始打盹 */
+const DOZE_MS = 30_000;
 const DRAG_THRESHOLD = 5;
+/** 宠物显示高度（px）：拖拽吸附时按这个给边缘留位 */
+const PET_H = 80;
+/** 边缘留白上限。宽高都按这个保守值算，免得算出屏 */
+const EDGE = PET_H + 16;
 
 type ChatLine = { id: number; text: string; mine: boolean };
+type Mood = 'idle' | 'smile' | 'sleepy' | 'think' | 'happy-a' | 'happy-b';
 
 /**
- * 像素猫桌宠。
- *
- * 三件事凑成一个「活物」的感觉：能拖走、点它说话、喂它鱼干。
- * 位置与喂食时间都记在 localStorage —— 刷新之后它还在你放下的地方，鱼干也不会重新变满。
- *
- * 猫咪画在 13×11 的字符网格上：一个字符 = 一个像素，比引一张图省事，
- * 也保证任何缩放比例下都是硬边像素而不是糊掉的位图。
+ * 六张表情各归其位。素材是一只鲸鱼娘的六个表情，落到状态上：
+ *   待机 / 打开对话 / 打盹 / 提问中 / 喂食两帧（交替成小动画）
+ * 换素材只要换这里的文件名，状态逻辑不用动。
  */
-const CAT_PIXELS = [
-  '..F.......F..',
-  '.FFF.....FFF.',
-  '.FIF.....FIF.',
-  'FFFFFFFFFFFFF',
-  'FFDFFFFFFDFFF',
-  'FFFFFFFFFFFFF',
-  'FFFFFDDDFFFFF',
-  'FFFFFFFFFFFFF',
-  '.FFFFF.FFFFF.',
-  '..FFFF.FFFF..',
-  '...FFF.FFF...',
-];
-
-const CAT_COLORS: Record<string, string> = {
-  F: '#dfa24c',
-  I: '#f0b8a4',
-  D: '#3a2c22',
+const FACES: Record<Mood, string> = {
+  idle: '/pets/idle.webp',
+  smile: '/pets/smile.webp',
+  sleepy: '/pets/sleepy.webp',
+  think: '/pets/think.webp',
+  'happy-a': '/pets/happy-a.webp',
+  'happy-b': '/pets/happy-b.webp',
 };
 
-function CatArt({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 13 11"
-      shapeRendering="crispEdges"
-      aria-hidden
-      className={`[image-rendering:pixelated] ${className ?? ''}`}
-    >
-      {CAT_PIXELS.flatMap((row, y) =>
-        [...row].map((cell, x) => {
-          const fill = CAT_COLORS[cell];
-          if (!fill) return null;
-          return <rect key={`${x}-${y}`} x={x} y={y} width={1} height={1} fill={fill} />;
-        }),
-      )}
-    </svg>
-  );
-}
-
-export function CatPet() {
+/**
+ * 桌宠。
+ *
+ * 四件事凑成一个「活物」的感觉：能拖走、点它说话、喂它鱼干、没人理就打盹。
+ * 位置与喂食时间都记在 localStorage —— 刷新之后它还在你放下的地方，鱼干也不会重新变满。
+ */
+export function Pet() {
   const [mounted, setMounted] = useState(false);
   // 默认落在左下角上方一点：右下角是博客助手，正左下角则是开发时的 Next 调试按钮
   const [pos, setPos] = useState({ x: 20, y: 88 });
@@ -69,6 +49,10 @@ export function CatPet() {
   const [busy, setBusy] = useState(false);
   const [hearts, setHearts] = useState<number[]>([]);
   const [cooldown, setCooldown] = useState(0);
+  const [dozing, setDozing] = useState(false);
+  const [flip, setFlip] = useState(false);
+  /** 任何交互都 +1，用来重启打盹计时 */
+  const [idleTick, setIdleTick] = useState(0);
 
   const dragRef = useRef<{ startX: number; startY: number; originX: number; originY: number; moved: boolean } | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -89,19 +73,51 @@ export function CatPet() {
     }
   }, []);
 
+  // 其余表情等首屏稳下来再预热：首屏只拉待机那张，不让六张一起挤带宽
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      for (const src of Object.values(FACES)) {
+        if (src === FACES.idle) continue;
+        const img = new Image();
+        img.src = src;
+      }
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, []);
+
   useEffect(() => {
     if (cooldown <= 0) return;
     const timer = setTimeout(() => setCooldown((value) => value - 1), 1000);
     return () => clearTimeout(timer);
   }, [cooldown]);
 
+  // 和 hearts 同时长：爱心粒子飞着的时候就是开心帧交替的时候
+  const cheering = hearts.length > 0;
+  useEffect(() => {
+    if (!cheering) {
+      setFlip(false);
+      return;
+    }
+    const timer = setInterval(() => setFlip((value) => !value), 220);
+    return () => clearInterval(timer);
+  }, [cheering]);
+
+  useEffect(() => {
+    if (busy || open) {
+      setDozing(false);
+      return;
+    }
+    const timer = setTimeout(() => setDozing(true), DOZE_MS);
+    return () => clearTimeout(timer);
+  }, [busy, open, idleTick]);
+
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
   }, [lines, busy]);
 
   const clamp = useCallback((x: number, y: number) => {
-    const limitX = typeof window === 'undefined' ? x : window.innerWidth - 72;
-    const limitY = typeof window === 'undefined' ? y : window.innerHeight - 72;
+    const limitX = typeof window === 'undefined' ? x : window.innerWidth - EDGE;
+    const limitY = typeof window === 'undefined' ? y : window.innerHeight - EDGE;
     return { x: Math.min(Math.max(8, x), Math.max(8, limitX)), y: Math.min(Math.max(8, y), Math.max(8, limitY)) };
   }, []);
 
@@ -113,6 +129,8 @@ export function CatPet() {
       originY: pos.y,
       moved: false,
     };
+    setDozing(false);
+    setIdleTick((value) => value + 1);
     (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
   };
 
@@ -161,8 +179,9 @@ export function CatPet() {
       /* 忽略 */
     }
     setCooldown(COOLDOWN_SECONDS);
+    setIdleTick((value) => value + 1);
 
-    const line = site.cat.lines[Math.floor(Math.random() * site.cat.lines.length)];
+    const line = site.pet.lines[Math.floor(Math.random() * site.pet.lines.length)];
     setLines((prev) => [...prev, { id: now, text: line, mine: false }]);
     setHearts((prev) => [...prev, now]);
     setTimeout(() => setHearts((prev) => prev.filter((id) => id !== now)), 1500);
@@ -175,7 +194,7 @@ export function CatPet() {
     setLines((prev) => [...prev, { id: Date.now(), text: message, mine: true }]);
     setBusy(true);
     try {
-      const res = await fetch('/api/blog/ask', {
+      const res = await fetch('/api/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message }),
@@ -183,10 +202,10 @@ export function CatPet() {
       const data = (await res.json()) as { reply?: string; error?: string };
       setLines((prev) => [
         ...prev,
-        { id: Date.now() + 1, text: data.reply ?? data.error ?? '喵…出了点问题。', mine: false },
+        { id: Date.now() + 1, text: data.reply ?? data.error ?? '出了点问题。', mine: false },
       ]);
     } catch {
-      setLines((prev) => [...prev, { id: Date.now() + 2, text: '喵…连不上了。', mine: false }]);
+      setLines((prev) => [...prev, { id: Date.now() + 2, text: '连不上服务器。', mine: false }]);
     } finally {
       setBusy(false);
     }
@@ -194,14 +213,24 @@ export function CatPet() {
 
   if (!mounted) return null;
 
-  const size = 44;
+  const mood: Mood = busy
+    ? 'think'
+    : cheering
+      ? flip
+        ? 'happy-b'
+        : 'happy-a'
+      : dozing
+        ? 'sleepy'
+        : open
+          ? 'smile'
+          : 'idle';
 
   return (
     <>
       {/* 小鱼干爱心粒子 */}
       <div
         className="pointer-events-none fixed z-40"
-        style={{ left: pos.x + 8, bottom: pos.y + size }}
+        style={{ left: pos.x + 8, bottom: pos.y + PET_H }}
         aria-hidden
       >
         {hearts.map((id, i) => (
@@ -221,14 +250,14 @@ export function CatPet() {
       {open && (
         <div
           role="dialog"
-          aria-label={`${site.cat.name} 的对话`}
+          aria-label={`${site.pet.name} 的对话`}
           className="glass fixed z-40 flex w-[min(300px,calc(100vw-32px))] flex-col rounded-2xl border border-ink-line p-4 shadow-lg"
-          style={{ left: pos.x, bottom: pos.y + size + 10 }}
+          style={{ left: pos.x, bottom: pos.y + PET_H + 10 }}
         >
           <div className="flex items-center justify-between gap-3">
             <p className="text-[12.5px] font-semibold text-ink-text">
-              {site.cat.name}
-              <span className="ml-2 font-normal text-ink-dim">图书馆里的猫</span>
+              {site.pet.name}
+              <span className="ml-2 font-normal text-ink-dim">图书馆里的小鲸鱼</span>
             </p>
             <button
               type="button"
@@ -244,7 +273,7 @@ export function CatPet() {
 
           <div ref={listRef} className="mt-3 max-h-52 space-y-2 overflow-y-auto pr-1">
             <p className="rounded-xl border border-ink-line bg-ink-soft px-3 py-2 text-[12.5px] leading-6 text-ink-text">
-              {site.cat.greeting}
+              {site.pet.greeting}
             </p>
             {lines.map((line) => (
               <p
@@ -269,7 +298,7 @@ export function CatPet() {
                 if (event.key === 'Enter') void ask();
               }}
               placeholder="问我点什么…"
-              aria-label="向猫咪提问"
+              aria-label="向宠物提问"
               className="min-w-0 flex-1 rounded-full border border-ink-line bg-ink-panel/60 px-3 py-2 text-[12.5px] text-ink-text outline-none placeholder:text-ink-dim focus:border-accent/60"
             />
             <button
@@ -293,10 +322,10 @@ export function CatPet() {
         </div>
       )}
 
-      {/* 猫本体：可拖，点击开合对话 */}
+      {/* 宠物本体：可拖，点击开合对话 */}
       <button
         type="button"
-        aria-label={open ? '收起猫咪对话' : `和${site.cat.name}说话`}
+        aria-label={open ? '收起桌宠对话' : `和${site.pet.name}说话`}
         aria-expanded={open}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -308,12 +337,15 @@ export function CatPet() {
           }
         }}
         style={{ left: pos.x, bottom: pos.y }}
-        className="fixed z-40 cursor-grab touch-none rounded-xl p-1.5 transition-transform duration-300 hover:-translate-y-0.5 active:cursor-grabbing"
+        className="fixed z-40 cursor-grab touch-none transition-transform duration-300 hover:-translate-y-0.5 active:cursor-grabbing"
       >
-        <span className="block drop-shadow-[0_4px_10px_rgba(0,0,0,0.35)]">
-          {/* 移动端缩一号：小屏上它更容易压到正文 */}
-          <CatArt className="h-9 w-9 sm:h-11 sm:w-11" />
-        </span>
+        <img
+          src={FACES[mood]}
+          alt=""
+          draggable={false}
+          // 移动端缩一号：小屏上它更容易压到正文
+          className="h-16 w-auto select-none drop-shadow-[0_6px_14px_rgba(0,0,0,0.35)] sm:h-20"
+        />
       </button>
     </>
   );
