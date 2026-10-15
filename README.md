@@ -232,9 +232,6 @@ Mock 与闲聊路径没有工具调用，就什么都不画，不表演一段假
 
 手边就能开工、方案已经想清楚的事；方向性的长线计划见下方「路线图」。
 
-- [ ] **把已收藏的两篇总结重跑成真三段式** —— 库里现在还是 Mock 节选。
-      配好模型（见「路线图」1）后按原 URL 重跑 `clip` 即可原地替换，
-      不用先删笔记，URL 唯一约束会接管更新
 - [ ] **收藏管道 HTTP 化** —— 现在只有 CLI（`python -m scripts.clip <url>`）。
       目标补 `POST /api/clippings`（`server/app/api/routes/clippings.py` 目前只有 `GET /clippings/pdf`）
       并在前端给一个「粘贴链接」入口，省掉开终端这一步
