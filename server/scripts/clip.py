@@ -13,7 +13,8 @@
         Mock 总结，并明说「这是节选不是转述」；
   入库：写 content/sample-vault/clippings/ 下的 Obsidian 格式笔记。
         文件名带 clip- 前缀——手写笔记是裸标题，撞名时覆盖的会是收藏稿，
-        不会动到自己的笔记；
+        不会动到自己的笔记。原文同时渲染成 PDF 存档进 clippings.pdf 列，
+        笔记里列出「总结自哪些文档」并给同源下载链接；
   索引：直接复用 scripts.init_db.import_vault，零改动，收藏即进 RAG。
 """
 
@@ -21,12 +22,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import io
 import json
 import os
 import re
 import sys
 from datetime import date, datetime
 from pathlib import Path
+from urllib.parse import quote
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = SERVER_DIR.parent
@@ -36,8 +39,16 @@ import frontmatter  # noqa: E402
 import httpx  # noqa: E402
 import trafilatura  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
+from reportlab.lib.colors import HexColor  # noqa: E402
+from reportlab.lib.pagesizes import A4  # noqa: E402
+from reportlab.lib.styles import ParagraphStyle  # noqa: E402
+from reportlab.lib.units import mm  # noqa: E402
+from reportlab.pdfbase import pdfmetrics  # noqa: E402
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont  # noqa: E402
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer  # noqa: E402
 from sqlalchemy import select, text  # noqa: E402
 from sqlalchemy.dialects.sqlite import insert  # noqa: E402
+from xml.sax.saxutils import escape  # noqa: E402
 
 load_dotenv(SERVER_DIR / ".env")
 
@@ -160,20 +171,87 @@ def one_liner(summary_md: str, title: str) -> str:
     return _trim(line, 80) if line else title
 
 
+# ────────────────────────────────────────────── 原文 PDF 存档
+
+PDF_FONT = "STSong-Light"  # reportlab 内置 CID 中文字体，不依赖任何字体文件
+
+
+def build_pdf(title: str, url: str, text: str) -> bytes:
+    """把原文渲染成 PDF 存档字节。
+
+    只存文字：图片与网页样式会丢，但可检索、可对照的文字全部保留——
+    存档的目的是防链接失效、供总结交叉验证，不是复刻网页。
+    """
+    pdfmetrics.registerFont(UnicodeCIDFont(PDF_FONT))
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=20 * mm,
+        rightMargin=20 * mm,
+        topMargin=20 * mm,
+        bottomMargin=20 * mm,
+        title=title,
+        author="微信收藏管道",
+    )
+    styles = {
+        "title": ParagraphStyle("title", fontName=PDF_FONT, fontSize=17, leading=25, spaceAfter=10),
+        "meta": ParagraphStyle(
+            "meta",
+            fontName=PDF_FONT,
+            fontSize=9.5,
+            leading=15,
+            textColor=HexColor("#666666"),
+            spaceAfter=3,
+        ),
+        "body": ParagraphStyle(
+            "body", fontName=PDF_FONT, fontSize=11, leading=18, spaceAfter=7, firstLineIndent=22
+        ),
+    }
+    story = [
+        Paragraph(escape(title), styles["title"]),
+        Paragraph(f"来源：{escape(url)}", styles["meta"]),
+        Paragraph(
+            f"收藏存档 · {date.today().isoformat()} · 由「微信收藏」管道自动生成",
+            styles["meta"],
+        ),
+        Spacer(1, 14),
+    ]
+    for para in re.split(r"\n{2,}", text):
+        cleaned = " ".join(line.strip() for line in para.split("\n") if line.strip())
+        if cleaned:
+            story.append(Paragraph(escape(cleaned), styles["body"]))
+    doc.build(story)
+    return buf.getvalue()
+
+
 # ────────────────────────────────────────────── 入库
 
 
-def write_note(url: str, title: str, summary_md: str, text: str, source_path: str = "") -> Path:
+def write_note(
+    url: str, title: str, summary_md: str, text: str, source_path: str = "", pdf_ready: bool = True
+) -> Path:
     """写 Obsidian 格式收藏笔记。source_path 非空表示重复收藏，原地更新。"""
     CLIPPINGS_DIR.mkdir(parents=True, exist_ok=True)
     rel = source_path or f"clippings/clip-{to_slug(title) or to_slug(url)}.md"
     path = VAULT_DIR / rel
+    chars = len(re.sub(r"\s", "", text))
+    if pdf_ready:
+        # 同源相对链接：Next 侧把 /api 代理到后端，博客里点开就是 PDF
+        pdf_section = (
+            "## 原文 PDF\n\n"
+            "本文的 AI 总结自以下文档；PDF 是收藏时留存的原文存档，原链接失效也能看：\n\n"
+            f"- 《{title}》· {chars} 字 · [打开原文 PDF](/api/clippings/pdf?url={quote(url)})\n\n"
+        )
+    else:
+        pdf_section = "## 原文 PDF\n\n（PDF 存档生成失败，仅保留下方原文文本。）\n\n"
     note = frontmatter.Post(
         content=(
             f"# {title}\n\n"
             f"> 来源：[{url}]({url}) · 收藏于 {date.today().isoformat()} · "
             "本文由收藏管道自动整理\n\n"
             f"## 三段式总结\n\n{summary_md}\n\n"
+            f"{pdf_section}"
             f"## 原文\n\n{text}\n"
         ),
         title=title,
@@ -187,27 +265,34 @@ def write_note(url: str, title: str, summary_md: str, text: str, source_path: st
     return Path(rel)
 
 
-async def record_clipping(url: str, title: str, rel_path: str, origin: str, words: int) -> None:
-    """落 clippings 表：URL 唯一，重复收藏同一链接只更新不新增。"""
+async def record_clipping(
+    url: str, title: str, rel_path: str, origin: str, words: int, pdf: bytes | None = None
+) -> None:
+    """落 clippings 表：URL 唯一，重复收藏同一链接只更新不新增。
+
+    pdf 为 None（本次生成失败）时保留库里的旧存档，不把好数据冲掉。
+    """
+    updates: dict = {
+        "title": title,
+        "source_path": rel_path.as_posix(),
+        "origin": origin,
+        "word_count": words,
+        "updated_at": text("datetime('now')"),
+    }
+    values = {
+        "url": url,
+        "title": title,
+        "source_path": rel_path.as_posix(),
+        "origin": origin,
+        "word_count": words,
+    }
+    if pdf is not None:
+        values["pdf"] = pdf
+        updates["pdf"] = pdf
     stmt = (
         insert(Clipping)
-        .values(
-            url=url,
-            title=title,
-            source_path=rel_path.as_posix(),
-            origin=origin,
-            word_count=words,
-        )
-        .on_conflict_do_update(
-            index_elements=[Clipping.url],
-            set_={
-                "title": title,
-                "source_path": rel_path.as_posix(),
-                "origin": origin,
-                "word_count": words,
-                "updated_at": text("datetime('now')"),
-            },
-        )
+        .values(**values)
+        .on_conflict_do_update(index_elements=[Clipping.url], set_=updates)
     )
     async with AsyncSessionLocal() as session:
         await session.execute(stmt)
@@ -262,6 +347,14 @@ async def clip(url: str, paste: bool) -> None:
     summary_md, tag = await summarize(article["title"], article["text"])
     print(f"  ✓ 总结完成（{tag}）")
 
+    print("▸ 生成原文 PDF 存档")
+    try:
+        pdf = build_pdf(article["title"], url, article["text"])
+        print(f"  ✓ PDF {len(pdf) // 1024} KB，随笔记一起入库")
+    except Exception as err:  # PDF 是增强不是前提：失败了照常收藏
+        pdf = None
+        print(f"  × PDF 生成失败（{err}），笔记不带存档链接")
+
     print("▸ 写入 Obsidian 笔记")
     rel = write_note(
         url,
@@ -269,8 +362,9 @@ async def clip(url: str, paste: bool) -> None:
         summary_md,
         article["text"],
         source_path=existing.source_path if existing else "",
+        pdf_ready=pdf is not None,
     )
-    await record_clipping(url, article["title"], rel, origin, len(article["text"]))
+    await record_clipping(url, article["title"], rel, origin, len(article["text"]), pdf)
     print(f"  ✓ {rel.as_posix()}")
 
     print("▸ 建索引（复用 vault 导入）")
