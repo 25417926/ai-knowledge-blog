@@ -193,6 +193,22 @@ class Citation(Base):
     score: Mapped[float] = mapped_column(Float, default=0)
 
 
+# ── 收藏管道层 ──────────────────────────────────────────
+
+
+class Clipping(Base):
+    __tablename__ = "clippings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    url: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    title: Mapped[str] = mapped_column(String, default="")
+    source_path: Mapped[str] = mapped_column(String, default="")
+    origin: Mapped[str] = mapped_column(String, default="web")
+    word_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default="datetime('now')")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default="datetime('now')")
+
+
 # ── 杂谈层 ──────────────────────────────────────────────
 
 

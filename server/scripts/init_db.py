@@ -32,7 +32,7 @@ from app.models import (  # noqa: E402
     Tag,
     Chunk,
 )
-from sqlalchemy import select  # noqa: E402
+from sqlalchemy import select, text  # noqa: E402
 from sqlalchemy.dialects.sqlite import insert  # noqa: E402
 
 WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]")
@@ -295,7 +295,8 @@ async def import_vault(session, vault_dir: Path) -> dict:
                     "source_path": note["sourcePath"],
                     "word_count": note["wordCount"],
                     "published_at": note["publishedAt"],
-                    "updated_at": "datetime('now')",
+                    # text() 包一下：裸字符串会被当绑定参数，DateTime 列直接拒收
+                    "updated_at": text("datetime('now')"),
                 },
             )
         )

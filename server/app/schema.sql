@@ -157,6 +157,23 @@ CREATE TABLE IF NOT EXISTS citations (
 CREATE INDEX IF NOT EXISTS idx_citations_turn ON citations(turn_id);
 CREATE INDEX IF NOT EXISTS idx_citations_chunk ON citations(chunk_id);
 
+-- ========== 收藏管道层 ==========
+-- 微信/浏览器收藏 → 知识库的收件箱。URL 唯一：重复收藏同一链接只更新不新增。
+-- origin: web（trafilatura 抓取）| paste（公众号反爬，浏览器复制全文粘贴）
+
+CREATE TABLE IF NOT EXISTS clippings (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  url         TEXT    NOT NULL UNIQUE,
+  title       TEXT    NOT NULL DEFAULT '',
+  source_path TEXT    NOT NULL DEFAULT '',
+  origin      TEXT    NOT NULL DEFAULT 'web',
+  word_count  INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_clippings_created ON clippings(created_at DESC);
+
 -- ========== 杂谈层 ==========
 -- 非正式随笔：结构与 posts 相近，但多一个情绪字段，且不进 RAG 索引
 -- tags 直接存 JSON 数组：杂谈总量在几十篇量级，为它建两张关联表不划算

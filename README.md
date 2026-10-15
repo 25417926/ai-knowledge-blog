@@ -42,6 +42,19 @@ npm run dev                   # http://localhost:3000
 cd server && VAULT_DIR="/path/to/your/vault" python -m scripts.init_db
 ```
 
+微信收藏 → 知识库（收件箱管道：浏览器打开文章 → 复制链接，其余全自动）：
+
+```bash
+cd server
+python -m scripts.clip <url>            # 抓取 → 三段式总结 → 写 clippings/ 笔记 → 建索引
+python -m scripts.clip <url> --paste    # 公众号反爬时：跳过抓取，粘贴全文（第一行当标题）
+python -m scripts.clip --list           # 查看已收藏
+```
+
+抓取用 trafilatura，失败自动降级粘贴；总结为三段式（是什么 / 核心观点 / 对我的启发），
+未配 LLM 时出节选式 Mock 总结。URL 唯一，重复收藏原地更新。收藏稿落在
+`content/sample-vault/clippings/`，与手写笔记同库，立刻可被 AI 助手检索引用。
+
 ## 路由
 
 | 路由 | 内容 |
@@ -105,9 +118,10 @@ server/                   后端（FastAPI + SQLAlchemy）
       ask.py          博客助手问答（整包 + SSE 流式双路由）与会话回放
   scripts/
     init_db.py       建表 + 种子 + Vault 导入（幂等）
+    clip.py          微信收藏管道：抓取 → 总结 → 入库 → 建索引
   requirements.txt
 content/
-  sample-vault/      示例 Vault，用来跑通全流程
+  sample-vault/      示例 Vault，用来跑通全流程（clippings/ 是收藏管道的自动入库目录）
   chatter/           杂谈原文（Markdown）
   moments.json       说说种子数据
   town/agents.json   角色设定（人格、口吻），博客助手也在这里

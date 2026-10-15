@@ -283,7 +283,11 @@ def configure_llm(base_url: str, api_key: str, model: str) -> None:
     LLM_MODEL = model.strip() or "gpt-4o-mini"
 
 
-async def chat_completion(messages: list[dict]) -> tuple[str, str]:
+async def chat_completion(messages: list[dict], temperature: float = 0.8) -> tuple[str, str]:
+    """OpenAI 兼容 chat completion，返回 (正文, 模型名)。
+
+    temperature 默认 0.8 保持 Agent 闲聊的多样性；总结类任务传 0.3 一类的低温。
+    """
     if not llm_configured():
         raise RuntimeError("LLM 未配置：缺少 LLM_BASE_URL 或 LLM_API_KEY")
     async with httpx.AsyncClient(timeout=LLM_TIMEOUT) as client:
@@ -293,7 +297,7 @@ async def chat_completion(messages: list[dict]) -> tuple[str, str]:
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {LLM_API_KEY}",
             },
-            json={"model": LLM_MODEL, "messages": messages, "temperature": 0.8},
+            json={"model": LLM_MODEL, "messages": messages, "temperature": temperature},
         )
     if res.status_code >= 400:
         raise RuntimeError(f"LLM 返回 {res.status_code}：{res.text[:200]}")
