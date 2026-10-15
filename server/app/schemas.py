@@ -154,6 +154,8 @@ class Citation(ORMModel):
     heading: str
     quote: str
     score: float
+    # 收藏文章专有：原文 PDF 存档链接，供「对照原文」交叉验证；非收藏文章为 None
+    pdf_url: str | None = None
 
 
 class TalkResult(ORMModel):

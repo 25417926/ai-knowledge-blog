@@ -21,6 +21,21 @@ const nextConfig = {
       { source: '/blog/:slug', destination: '/posts/:slug', permanent: true },
     ];
   },
+
+  /**
+   * /api 代理到 Python 后端。
+   *
+   * 页面取数走 src/lib/api.ts 的绝对地址，用不到这个代理；它服务的是「内容里的
+   * 同源链接」——收藏笔记的「打开原文 PDF」和助手出处卡片的「对照原文 PDF」都写成
+   * /api/clippings/pdf?url=...，经这里转到后端，链接不绑死主机端口。
+   * 后端地址默认 127.0.0.1:8000，部署时用 BACKEND_ORIGIN 覆盖。
+   *
+   * Next 侧已无自有 /api 路由（前后端拆分时删净），整条前缀让出没有冲突。
+   */
+  async rewrites() {
+    const backend = process.env.BACKEND_ORIGIN ?? 'http://127.0.0.1:8000';
+    return [{ source: '/api/:path*', destination: `${backend}/api/:path*` }];
+  },
 };
 
 export default nextConfig;

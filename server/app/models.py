@@ -14,6 +14,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -205,6 +206,7 @@ class Clipping(Base):
     source_path: Mapped[str] = mapped_column(String, default="")
     origin: Mapped[str] = mapped_column(String, default="web")
     word_count: Mapped[int] = mapped_column(Integer, default=0)
+    pdf: Mapped[bytes | None] = mapped_column(LargeBinary)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default="datetime('now')")
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default="datetime('now')")
 

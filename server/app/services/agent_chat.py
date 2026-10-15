@@ -19,12 +19,23 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator
+from urllib.parse import quote
 
 import httpx
 from sqlalchemy import Integer, String, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import Agent, AgentMemory, AgentRelation, AgentSession, AgentTurn, Citation, Chunk, Post
+from ..models import (
+    Agent,
+    AgentMemory,
+    AgentRelation,
+    AgentSession,
+    AgentTurn,
+    Citation,
+    Chunk,
+    Clipping,
+    Post,
+)
 from ..schemas import AffinityView, Citation as CitationOut
 
 STAGES: list[dict] = [
@@ -180,6 +191,7 @@ async def _load_chunks(session: AsyncSession, about: str | None) -> list[dict]:
             Post.slug,
             Post.title,
             Post.category,
+            Post.source_path,
         )
         .join(Post, Post.id == Chunk.post_id)
         .order_by(Chunk.id)
@@ -194,9 +206,28 @@ async def _load_chunks(session: AsyncSession, about: str | None) -> list[dict]:
             "slug": r.slug,
             "title": r.title,
             "category": r.category,
+            "source_path": r.source_path,
         }
         for r in (await session.execute(stmt)).all()
     ]
+
+
+async def _clipping_pdf_map(session: AsyncSession) -> dict[str, str]:
+    """收藏笔记的 source_path → PDF 下载链接（只收真的有存档的行）。
+
+    用 length(pdf) 判断有没有 BLOB，不把整列读进内存。链接是同源相对路径，
+    由 Next 的 rewrites 代理到 /api/clippings/pdf。
+    """
+    rows = (
+        await session.execute(
+            select(Clipping.source_path, Clipping.url, func.length(Clipping.pdf).label("size"))
+        )
+    ).all()
+    return {
+        r.source_path: f"/api/clippings/pdf?url={quote(r.url, safe='')}"
+        for r in rows
+        if r.size
+    }
 
 
 def _score_chunk(row: dict, tokens: list[str], df: dict[str, int]) -> float:
@@ -239,6 +270,7 @@ async def retrieve(
     ]
     scored = [(r, s) for r, s in scored if s > 0]
     scored.sort(key=lambda x: x[1], reverse=True)
+    pdf_map = await _clipping_pdf_map(session)
     return [
         {
             "chunk_id": r["id"],
@@ -248,6 +280,8 @@ async def retrieve(
             "heading": r["heading_path"],
             "quote": r["body"].strip(),
             "score": round(s, 3),
+            # 收藏文章才带：原文 PDF 存档链接，供交叉验证
+            "pdf_url": pdf_map.get(r["source_path"]) if r["category"] == "clippings" else None,
         }
         for r, s in scored[:limit]
     ]
@@ -619,6 +653,11 @@ def build_messages(ctx: ReplyContext, citations: list[dict], message: str) -> li
             "要求：先用一句话给结论，再给依据。引用某段时在句末标出它的编号，例如 [1]。",
             "片段里没有的内容，直接说不确定，不要编造。",
         ]
+        if any(c.get("pdf_url") for c in citations):
+            lines.append(
+                "注意：带 PDF 存档的片段出自收藏文章——「三段式总结」小节是压缩转述，"
+                "「原文」小节才是全文；两者说法不一致时以原文为准，并优先引用原文段的编号。"
+            )
     lines.append("回答保持口语化，控制在 2-4 句，不要用列表和标题。")
     history = [
         {"role": "assistant" if t["role"] == "assistant" else "user", "content": t["content"]}
@@ -815,6 +854,8 @@ def build_tool_messages(ctx: ReplyContext, message: str) -> list[dict]:
         "4. 用户问题缺少关键信息时（例如没说是哪篇文章），先用一句话追问，不要假设；",
         "5. 用户用陈述句说出关于自己的事实时，调用 remember_fact 记下；疑问句不要记；",
         "6. 回答保持口语化，2-4 句，不要用列表和标题。",
+        "7. 检索到的片段若出自收藏文章（分类 clippings）：「三段式总结」小节是压缩转述，"
+        "「原文」小节才是全文；两者不一致时以原文为准，优先引用原文段的编号。",
     ]
     history = [
         {"role": "assistant" if t["role"] == "assistant" else "user", "content": t["content"]}
@@ -1167,16 +1208,29 @@ async def read_log(session: AsyncSession, session_key: str, agent_slug: str, lim
         ids = [t.id for t in turns]
         rows = (
             await session.execute(
-                select(Citation.turn_id, Post.slug, Post.title, Chunk.heading_path)
+                select(
+                    Citation.turn_id,
+                    Post.slug,
+                    Post.title,
+                    Post.category,
+                    Post.source_path,
+                    Chunk.heading_path,
+                )
                 .join(Chunk, Chunk.id == Citation.chunk_id)
                 .join(Post, Post.id == Chunk.post_id)
                 .where(Citation.turn_id.in_(ids))
                 .order_by(Citation.id)
             )
         ).all()
-        for turn_id, slug, title, heading in rows:
+        pdf_map = await _clipping_pdf_map(session)
+        for turn_id, slug, title, category, source_path, heading in rows:
             by_turn.setdefault(turn_id, []).append(
-                {"postSlug": slug, "postTitle": title, "heading": heading}
+                {
+                    "postSlug": slug,
+                    "postTitle": title,
+                    "heading": heading,
+                    "pdfUrl": pdf_map.get(source_path) if category == "clippings" else None,
+                }
             )
 
     rel = await _read_relation(session, agent.id)
@@ -1216,6 +1270,7 @@ def citations_out(citations: list[dict]) -> list[CitationOut]:
             heading=c["heading"],
             quote=c["quote"],
             score=c["score"],
+            pdf_url=c.get("pdf_url"),
         )
         for c in citations
     ]

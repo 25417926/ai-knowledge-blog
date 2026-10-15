@@ -25,6 +25,12 @@ title: 科技爱好者周刊（第 414 期）：Jev 决策模型有什么用
 ### 对我的启发
 （配置 LLM 后生成）
 
+## 原文 PDF
+
+本文的 AI 总结自以下文档；PDF 是收藏时留存的原文存档，原链接失效也能看：
+
+- 《科技爱好者周刊（第 414 期）：Jev 决策模型有什么用》· 4856 字 · [打开原文 PDF](/api/clippings/pdf?url=https%3A//www.ruanyifeng.com/blog/2026/10/weekly-issue-414.html)
+
 ## 原文
 
 这里记录每周值得分享的科技内容，周五发布。

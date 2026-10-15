@@ -168,6 +168,7 @@ CREATE TABLE IF NOT EXISTS clippings (
   source_path TEXT    NOT NULL DEFAULT '',
   origin      TEXT    NOT NULL DEFAULT 'web',
   word_count  INTEGER NOT NULL DEFAULT 0,
+  pdf         BLOB,                                  -- 收藏时的原文存档（reportlab 生成，按 URL 命中）
   created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
   updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
 );

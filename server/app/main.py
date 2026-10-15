@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .database import dispose_engine, get_session, init_schema
-from .api.routes import ask, content
+from .api.routes import ask, clippings, content
 from .services.agent_chat import configure_llm
 
 load_dotenv()
@@ -52,6 +52,7 @@ app.add_middleware(
 
 app.include_router(content.router, prefix="/api", tags=["content"])
 app.include_router(ask.router, prefix="/api", tags=["ask"])
+app.include_router(clippings.router, prefix="/api", tags=["clippings"])
 
 
 @app.get("/api/health")

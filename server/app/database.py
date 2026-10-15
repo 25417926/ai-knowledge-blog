@@ -50,13 +50,21 @@ async def init_schema() -> None:
 async def _migrate_columns(conn) -> None:
     """CREATE TABLE IF NOT EXISTS 不会给旧库补列，新增列在这里轻量 ALTER。
 
-    目前只有 agent_turns.tool_trace（Function Calling 的调用 trace）。
+    每个条目 = (表名, 列名, ALTER 语句)。目前有 agent_turns.tool_trace
+    （Function Calling 的调用 trace）与 clippings.pdf（收藏的原文 PDF 存档）。
     """
-    rows = (await conn.execute(text("PRAGMA table_info(agent_turns)"))).fetchall()
-    if rows and "tool_trace" not in {r[1] for r in rows}:
-        await conn.execute(
-            text("ALTER TABLE agent_turns ADD COLUMN tool_trace TEXT NOT NULL DEFAULT ''")
-        )
+    migrations = [
+        (
+            "agent_turns",
+            "tool_trace",
+            "ALTER TABLE agent_turns ADD COLUMN tool_trace TEXT NOT NULL DEFAULT ''",
+        ),
+        ("clippings", "pdf", "ALTER TABLE clippings ADD COLUMN pdf BLOB"),
+    ]
+    for table, column, ddl in migrations:
+        rows = (await conn.execute(text(f"PRAGMA table_info({table})"))).fetchall()
+        if rows and column not in {r[1] for r in rows}:
+            await conn.execute(text(ddl))
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:

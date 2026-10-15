@@ -5,7 +5,8 @@ import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ASK_BASE } from '@/lib/api';
 
-type Source = { postSlug: string; postTitle: string; heading: string };
+/** 出处。pdfUrl 仅收藏文章有：原文 PDF 存档链接，供对照总结交叉验证 */
+type Source = { postSlug: string; postTitle: string; heading: string; pdfUrl?: string | null };
 
 /** 工具调用的一步（「检索“线程池 核心参数” → 命中 4 篇」）。历史数据可能缺 label，兜底用 tool 名 */
 type Step = { tool: string; label: string; hits: number; ms: number };
@@ -24,7 +25,7 @@ type Message = {
 
 type AskResponse = {
   reply: string;
-  citations: { postSlug: string; postTitle: string; heading: string }[];
+  citations: { postSlug: string; postTitle: string; heading: string; pdfUrl?: string | null }[];
   turnId: number;
   model: string;
   mock: boolean;
@@ -467,17 +468,31 @@ export function BlogAssistant() {
                       <div className="mt-2 space-y-1.5">
                         <p className="text-[10.5px] tracking-wide text-ink-dim">出处</p>
                         {m.sources.map((s, i) => (
-                          <Link
+                          <div
                             key={`${s.postSlug}-${i}`}
-                            href={`/posts/${encodeURIComponent(s.postSlug)}`}
-                            className="flex items-baseline gap-2 rounded-lg border border-ink-line px-2.5 py-1.5 text-[12px] transition-colors hover:border-accent/60"
+                            className="rounded-lg border border-ink-line px-2.5 py-1.5 text-[12px] transition-colors hover:border-accent/60"
                           >
-                            <span className="font-mono text-[10.5px] text-accent-ink">{i + 1}</span>
-                            <span className="min-w-0 flex-1">
-                              <span className="text-ink-text">{s.postTitle}</span>
-                              <span className="ml-1.5 text-ink-dim">› {lastHeading(s.heading)}</span>
-                            </span>
-                          </Link>
+                            <Link
+                              href={`/posts/${encodeURIComponent(s.postSlug)}`}
+                              className="flex items-baseline gap-2"
+                            >
+                              <span className="font-mono text-[10.5px] text-accent-ink">{i + 1}</span>
+                              <span className="min-w-0 flex-1">
+                                <span className="text-ink-text">{s.postTitle}</span>
+                                <span className="ml-1.5 text-ink-dim">› {lastHeading(s.heading)}</span>
+                              </span>
+                            </Link>
+                            {s.pdfUrl && (
+                              <a
+                                href={s.pdfUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="mt-1 inline-block text-[10.5px] text-accent-ink hover:underline"
+                              >
+                                对照原文 PDF ↗
+                              </a>
+                            )}
+                          </div>
                         ))}
                       </div>
                     )}
