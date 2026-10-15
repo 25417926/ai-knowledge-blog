@@ -16,7 +16,9 @@
         不会动到自己的笔记。原文渲染成 PDF 存档进 clippings.pdf 列，笔记里
         只留三段式总结 + 下载链接——原文全文有 PDF 这一份就够，再贴一遍
         正文等于同一份内容存两份；PDF 生成失败时才退回把原文贴进笔记。
-  索引：直接复用 scripts.init_db.import_vault，零改动，收藏即进 RAG。
+  索引：复用 scripts.init_db.import_vault。原文不进笔记，但也不能从检索里消失——
+        另存一份去图的「检索用原文」到 clippings.index_text，import_vault 按
+        source_path 取回来补成「原文存档 >」下的 chunk，问细节照样检索得到。
 """
 
 from __future__ import annotations
@@ -74,6 +76,7 @@ BROWSER_UA = (
 VAULT_DIR = PROJECT_ROOT / "content" / "sample-vault"
 CLIPPINGS_DIR = VAULT_DIR / "clippings"
 MIN_TEXT = 200  # 正文低于此长度视为抓取失败，走粘贴降级
+MIN_INDEX_CHARS = 200  # 检索用原文低于此长度：图片为主的文章，检索基本只能命中标题
 
 SUMMARY_PROMPT = """请基于下面的文章全文写三段式中文摘要，严格按以下结构输出 Markdown，不要输出结构之外的任何内容：
 
@@ -177,6 +180,22 @@ def _count_chars(text: str) -> int:
     text = INLINE_IMAGE_RE.sub("", text)
     text = INLINE_LINK_RE.sub(r"\1", text)
     return len(re.sub(r"[\s#>*`|\[\]()!\-]", "", text))
+
+
+def _index_text(text: str) -> str:
+    """检索用的原文：图片一律不索引，只留文字；几乎没有文字的返回空串。
+
+    图片 URL 又长又占地方（实测周刊 414 期 44 张图，去掉后正文少 3600 字符），
+    对检索更是纯噪声；“alt 有字就留下 alt”只是防个别站点真写了说明，
+    实测 trafilatura 抽出来的 alt 基本是空的。
+
+    返回空串表示「这篇没有可检索的正文」（图片为主、正文全在截图里的文章）：
+    宁可让检索侧明确报异常，也不要塞占位文字假装有内容。这类文章怎么处理还没定，
+    先如实标记出来 —— 图本身在 PDF 存档里，人点得开。
+    """
+    kept = INLINE_IMAGE_RE.sub(lambda m: m.group(1).strip(), text)
+    kept = re.sub(r"\n{3,}", "\n\n", kept).strip()
+    return kept if _count_chars(kept) >= MIN_INDEX_CHARS else ""
 
 
 # ────────────────────────────────────────────── 总结
@@ -591,11 +610,19 @@ def write_note(
 
 
 async def record_clipping(
-    url: str, title: str, rel_path: str, origin: str, words: int, pdf: bytes | None = None
+    url: str,
+    title: str,
+    rel_path: str,
+    origin: str,
+    words: int,
+    pdf: bytes | None = None,
+    index_body: str = "",
 ) -> None:
     """落 clippings 表：URL 唯一，重复收藏同一链接只更新不新增。
 
     pdf 为 None（本次生成失败）时保留库里的旧存档，不把好数据冲掉。
+    index_body 是检索用原文（已去图）：笔记里没有原文，它才是 RAG 的唯一来源，
+    由 init_db.import_vault 补成 chunk；为空同样保留库里的旧值。
     """
     updates: dict = {
         "title": title,
@@ -614,6 +641,9 @@ async def record_clipping(
     if pdf is not None:
         values["pdf"] = pdf
         updates["pdf"] = pdf
+    if index_body:
+        values["index_text"] = index_body
+        updates["index_text"] = index_body
     stmt = (
         insert(Clipping)
         .values(**values)
@@ -690,8 +720,14 @@ async def clip(url: str, paste: bool) -> None:
         source_path=existing.source_path if existing else "",
         pdf_ready=pdf is not None,
     )
-    await record_clipping(url, article["title"], rel, origin, chars, pdf)
+    # 原文只进索引不进笔记：笔记里是给人读的总结，检索要的是原文的字
+    index_body = _index_text(article["text"])
+    await record_clipping(url, article["title"], rel, origin, chars, pdf, index_body)
     print(f"  ✓ {rel.as_posix()}")
+    if index_body:
+        print(f"  ✓ 检索用原文 {len(index_body)} 字符（已去图，只在索引里）")
+    else:
+        print("  ! 这篇几乎没有文字（图片为主），不进检索；问到它会明确说检索不到正文")
 
     print("▸ 建索引（复用 vault 导入）")
     async with AsyncSessionLocal() as session:

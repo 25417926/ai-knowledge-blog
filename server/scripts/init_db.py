@@ -25,6 +25,7 @@ from app.database import DB_PATH, init_schema, AsyncSessionLocal  # noqa: E402
 from app.models import (  # noqa: E402
     Agent,
     Chatter,
+    Clipping,
     Link,
     Moment,
     Post,
@@ -37,6 +38,7 @@ from sqlalchemy.dialects.sqlite import insert  # noqa: E402
 
 WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]")
 CHUNK_SOFT_LIMIT = 800
+CLIP_INDEX_SECTION = "原文存档"  # 收藏稿原文 chunk 的段落前缀，与笔记里的总结区分开
 MOODS = {"calm", "happy", "thinking", "tired", "emo"}
 
 
@@ -271,6 +273,16 @@ async def import_vault(session, vault_dir: Path) -> dict:
     notes = collect_notes(vault_dir)
     stats = {"posts": 0, "tags": 0, "links": 0, "resolvedLinks": 0, "chunks": 0}
 
+    # 收藏稿的原文不写在笔记里（见 scripts/clip.py），只落在 clippings.index_text。
+    # 这里按 source_path 取回来补成 chunk：问原文细节检索得到，笔记与页面仍是总结。
+    clip_index = {
+        row.source_path: row.index_text
+        for row in (
+            await session.execute(select(Clipping.source_path, Clipping.index_text))
+        ).all()
+        if row.index_text
+    }
+
     for note in notes:
         stmt = (
             insert(Post)
@@ -330,7 +342,22 @@ async def import_vault(session, vault_dir: Path) -> dict:
             stats["links"] += 1
 
         await session.execute(Chunk.__table__.delete().where(Chunk.post_id == post_id))
-        for index, chunk in enumerate(note["chunks"]):
+        chunks = list(note["chunks"])
+        origin = clip_index.get(note["sourcePath"])
+        if origin:
+            # 原文 chunk 接在笔记 chunk 之后，heading 挂上「原文存档 >」便于出处卡片辨认
+            chunks += [
+                {
+                    "headingPath": (
+                        f"{CLIP_INDEX_SECTION} > {c['headingPath']}"
+                        if c["headingPath"]
+                        else CLIP_INDEX_SECTION
+                    ),
+                    "body": c["body"],
+                }
+                for c in split_chunks(origin)
+            ]
+        for index, chunk in enumerate(chunks):
             await session.execute(
                 insert(Chunk).values(
                     post_id=post_id,

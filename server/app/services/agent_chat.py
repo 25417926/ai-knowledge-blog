@@ -212,22 +212,28 @@ async def _load_chunks(session: AsyncSession, about: str | None) -> list[dict]:
     ]
 
 
-async def _clipping_pdf_map(session: AsyncSession) -> dict[str, str]:
-    """收藏笔记的 source_path → PDF 下载链接（只收真的有存档的行）。
+async def _clipping_marks(session: AsyncSession) -> tuple[dict[str, str], set[str]]:
+    """收藏稿的两件检索相关事实，一次查完：
 
-    用 length(pdf) 判断有没有 BLOB，不把整列读进内存。链接是同源相对路径，
-    由 Next 的 rewrites 代理到 /api/clippings/pdf。
+    - source_path → PDF 下载链接（只收真的有存档的行）。
+    - 没有可检索原文的收藏稿集合（index_text 为空 = 收藏时就没抽出文字，图片为主、
+      正文全在截图里）。这种文章答不了，见 retrieve 里的异常。
+    两列都只取 length()，不把 BLOB / 正文读进内存。
     """
     rows = (
         await session.execute(
-            select(Clipping.source_path, Clipping.url, func.length(Clipping.pdf).label("size"))
+            select(
+                Clipping.source_path,
+                Clipping.url,
+                func.length(Clipping.pdf).label("size"),
+                func.length(Clipping.index_text).label("chars"),
+            )
         )
     ).all()
-    return {
-        r.source_path: f"/api/clippings/pdf?url={quote(r.url, safe='')}"
-        for r in rows
-        if r.size
+    pdf_map = {
+        r.source_path: f"/api/clippings/pdf?url={quote(r.url, safe='')}" for r in rows if r.size
     }
+    return pdf_map, {r.source_path for r in rows if not r.chars}
 
 
 def _score_chunk(row: dict, tokens: list[str], df: dict[str, int]) -> float:
@@ -270,7 +276,14 @@ async def retrieve(
     ]
     scored = [(r, s) for r, s in scored if s > 0]
     scored.sort(key=lambda x: x[1], reverse=True)
-    pdf_map = await _clipping_pdf_map(session)
+    pdf_map, no_text = await _clipping_marks(session)
+    if scored and scored[0][1] >= RAG_MIN_SCORE and scored[0][0]["source_path"] in no_text:
+        # 命中的是图片为主的收藏稿：没有正文可检索，硬答只会编。直接报异常，
+        # 这类文章怎么处理还没定（先把问题暴露出来，别用总结硬凑答案）
+        raise ValueError(
+            f"《{scored[0][0]['title']}》以图片为主，AI 检索不到正文；"
+            "请点它的「原文 PDF」存档查看原图。"
+        )
     return [
         {
             "chunk_id": r["id"],

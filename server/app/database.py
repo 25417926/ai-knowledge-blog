@@ -51,7 +51,8 @@ async def _migrate_columns(conn) -> None:
     """CREATE TABLE IF NOT EXISTS 不会给旧库补列，新增列在这里轻量 ALTER。
 
     每个条目 = (表名, 列名, ALTER 语句)。目前有 agent_turns.tool_trace
-    （Function Calling 的调用 trace）与 clippings.pdf（收藏的原文 PDF 存档）。
+    （Function Calling 的调用 trace）、clippings.pdf（收藏的原文 PDF 存档）
+    与 clippings.index_text（检索用原文，见 scripts/clip.py）。
     """
     migrations = [
         (
@@ -60,6 +61,11 @@ async def _migrate_columns(conn) -> None:
             "ALTER TABLE agent_turns ADD COLUMN tool_trace TEXT NOT NULL DEFAULT ''",
         ),
         ("clippings", "pdf", "ALTER TABLE clippings ADD COLUMN pdf BLOB"),
+        (
+            "clippings",
+            "index_text",
+            "ALTER TABLE clippings ADD COLUMN index_text TEXT NOT NULL DEFAULT ''",
+        ),
     ]
     for table, column, ddl in migrations:
         rows = (await conn.execute(text(f"PRAGMA table_info({table})"))).fetchall()

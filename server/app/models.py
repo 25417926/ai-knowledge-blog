@@ -207,6 +207,7 @@ class Clipping(Base):
     origin: Mapped[str] = mapped_column(String, default="web")
     word_count: Mapped[int] = mapped_column(Integer, default=0)
     pdf: Mapped[bytes | None] = mapped_column(LargeBinary)
+    index_text: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default="datetime('now')")
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default="datetime('now')")
 
