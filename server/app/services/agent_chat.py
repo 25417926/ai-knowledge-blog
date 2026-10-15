@@ -194,6 +194,8 @@ async def _load_chunks(session: AsyncSession, about: str | None) -> list[dict]:
             Post.source_path,
         )
         .join(Post, Post.id == Chunk.post_id)
+        # 草稿不进检索：后台里没写完的东西不该被公开助手引用（前端列表/详情早已按状态过滤）
+        .where(Post.status == "published")
         .order_by(Chunk.id)
     )
     if about:
@@ -1235,7 +1237,7 @@ async def read_log(session: AsyncSession, session_key: str, agent_slug: str, lim
                 .order_by(Citation.id)
             )
         ).all()
-        pdf_map = await _clipping_pdf_map(session)
+        pdf_map, _ = await _clipping_marks(session)
         for turn_id, slug, title, category, source_path, heading in rows:
             by_turn.setdefault(turn_id, []).append(
                 {

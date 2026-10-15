@@ -66,6 +66,7 @@ python -m scripts.clip --list           # 查看已收藏
 | `/moments` | 说说流：宫格自适应、排序切换、搜索 |
 | `/chatter` `/chatter/[slug]` | 杂谈：情绪枚举 + 标签 + 搜索；详情页 |
 | `/about` | 关于：自我介绍、时间线、技能栈、兴趣、联系方式 |
+| `/admin` `/admin/posts` `/admin/logs` | 后台：口令登录、文章增删改、对话日志（未配 `ADMIN_PASSWORD` 则整块禁用） |
 | `/robots.txt` `/sitemap.xml` `/rss.xml` | 由 `app/robots.ts`、`app/sitemap.ts`、`app/rss.xml/route.ts` 生成 |
 
 `/blog` 与 `/blog/:slug` 在 `next.config.mjs` 里做了 308 永久重定向。
@@ -84,10 +85,12 @@ src/                       前端（Next.js App Router）
     moments/         说说流
     projects/        项目矩阵
     about/           关于
+    admin/           后台：layout 是认证闸门 + 侧栏，posts 列表/编辑器，logs 日志面板
     robots.ts sitemap.ts rss.xml/route.ts
     error.tsx not-found.tsx
   lib/
     api.ts           唯一的数据出口：typed fetch 客户端，字段与后端 camelCase 契约对齐
+    admin.ts         后台的 fetch 客户端（改走同源 /api 代理，见「后台」一节）
     markdown.ts      Markdown → HTML（remark/rehype + Shiki 代码高亮）+ 目录抽取
     moods.ts         情绪枚举与配色（无依赖，客户端可引用）
     projects.ts      项目清单（编译期常量，不入库）
@@ -116,6 +119,7 @@ server/                   后端（FastAPI + SQLAlchemy）
     api/routes/
       content.py      内容查询接口
       ask.py          博客助手问答（整包 + SSE 流式双路由）与会话回放
+      admin.py        后台接口：口令登录 + 文章 CRUD + 对话日志（全部要过 require_admin）
   scripts/
     init_db.py       建表 + 种子 + Vault 导入（幂等）
     clip.py          微信收藏管道：抓取 → 总结 → 入库 → 建索引
@@ -131,6 +135,23 @@ content/
 
 **内容只存一份。** Markdown 原文进 `posts.content`，按标题切分成 `chunks` 供 RAG 检索，
 `[[双链]]` 解析进 `links`。博客阅读、AI 检索、知识图谱三种用途复用同一份数据，不各自维护。
+
+**后台保存写回文件，而不是只写数据库。** `/admin` 里保存文章时，先把内容写成
+`content/sample-vault/<分类>/<标题>.md`（frontmatter 沿用现有笔记风格），再调
+`scripts.init_db.import_vault` 重建索引——切分、双链解析、标签一律复用那一份实现，
+不另写一套。不能只写库的原因：`import_vault` 只做 upsert、从不删，若后台只改数据库，
+下次谁再跑一次 `init_db`，文件里的旧内容就会把改动覆盖掉。全量重导同时也是**正确**做法——
+新文章的反向链接要靠「所有笔记一起解析」才接得上。删除 = 删文件 + 删行
+（`chunks` / `links` / `post_tags` 走外键级联），并清掉不再被引用的标签。
+换言之，后台替你在维护 Obsidian 仓库。
+
+**后台的登录态走同源代理，不直连后端。** 口令校验通过后签一个带到期时间的 token
+写进 httpOnly cookie（标准库 `hmac`，不引 JWT）；前端不用 `lib/api.ts` 那套绝对地址，
+而是走 `/api/admin/*` 同源相对路径，由 `next.config.mjs` 现成的 rewrites 转给后端。
+原因是 cookie 落在哪个主机上很要命：直连 `127.0.0.1:8000` 的话，你从 `localhost:3000`
+打开页面就成了跨站请求，SameSite=Lax 的 cookie 不会带上，表现为「刚登录完又被弹回登录页」。
+没配 `ADMIN_PASSWORD` 时后台整体返回 503（而不是"空口令可登录"）；草稿不进前台列表、
+详情与 AI 检索——`status='draft'` 在公开查询和 `_load_chunks` 里都被挡在外面。
 
 **Agent 内核。** `agents` 系列表（角色 / 记忆 / 好感度 / 会话 / 日志 / 引用）是
 全站 AI 助手的地基，博客助手「知行」见 `content/town/agents.json`
@@ -226,7 +247,9 @@ Mock 与闲聊路径没有工具调用，就什么都不画，不表演一段假
       流式不可用时前端自动回落整包路径
 - [x] 阶段 6d：思考链展示 —— 工具调用过程实时可见（step 事件 + 步骤条，结束折叠为
       「检索 N 次 · 引用 M 篇」可展开），历史消息从 tool_trace 回放同一步骤条
-- [ ] 阶段 5：后台写作与登录 · Wiki 自动沉淀与出处回链 · 实时日志面板
+- [x] 阶段 5a：后台写作与登录 · 对话日志面板 —— `/admin` 口令登录、文章增删改
+      （保存即写回 Vault 并重建索引、草稿不进前台与检索）、对话日志时间线
+- [ ] 阶段 5b：Wiki 自动沉淀与出处回链（`wiki_entries` / `wiki_sources` 两张表已建但零引用）
 
 ## 待办（TODO）
 
@@ -252,20 +275,21 @@ Mock 与闲聊路径没有工具调用，就什么都不画，不表演一段假
 
 ## 路线图（按依赖顺序）
 
-1. **接入真实语言模型。** 在 `server/.env` 填 `LLM_BASE_URL` 与 `LLM_API_KEY`（两者都需要），
-   即可从 Mock 切到真实回答；协议是 OpenAI 兼容格式，换 baseURL 就能接 DeepSeek / 通义 / 智谱 / Ollama。
-   切到真实模型后，Function Calling 循环自动生效（见「设计原则」），无需改业务代码。
-2. **向量检索。** 导入 Vault 时可选生成 embedding 写入 `chunks.embedding`，
+1. **向量检索。** 导入 Vault 时可选生成 embedding 写入 `chunks.embedding`，
    与现有关键词检索做混合排序（关键词保精度、向量保召回）。
-3. **沉淀闭环。** 把问答日志里高频但站内没有的内容，提示补写成新笔记，
+2. **沉淀闭环。** 把问答日志里高频但站内没有的内容，提示补写成新笔记，
    形成「问 → 答 → 补文档」的正循环。
-4. **后台与写作。** 登录 + 在线写作 + 代码块插入，省掉「改 Markdown 再跑导入」这一步。
+3. **编辑器增强。** 正文现在是纯 textarea；补 Markdown 实时预览、代码块插入、
+   图片上传，就彻底不用再手工改文件了。
 
 ## 说明
 
-`server/.env.example` 列出了后端全部可配置项，均为可选。不配置 LLM 时系统运行在 Mock 模式，
+`server/.env.example` 列出了后端全部可配置项。不配置 LLM 时系统运行在 Mock 模式，
 AI 回答由「原文节选 + 出处」拼成，用于完整演示与调试——没有 API Key 也能跑通全部主线。
 前端取数地址默认 `http://127.0.0.1:8000`，部署时用 `NEXT_PUBLIC_API_BASE_URL` 覆盖。
+
+后台上线方式是给 `server/.env` 加一行 `ADMIN_PASSWORD=你的口令`（改口令会让已签发的会话立刻失效），
+然后重启后端，开 `http://localhost:3000/admin`。留空则 `/admin` 整块禁用，前台不受影响。
 
 ## Windows 上的构建提示
 
