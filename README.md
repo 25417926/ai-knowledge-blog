@@ -228,6 +228,31 @@ Mock 与闲聊路径没有工具调用，就什么都不画，不表演一段假
       「检索 N 次 · 引用 M 篇」可展开），历史消息从 tool_trace 回放同一步骤条
 - [ ] 阶段 5：后台写作与登录 · Wiki 自动沉淀与出处回链 · 实时日志面板
 
+## 待办（TODO）
+
+手边就能开工、方案已经想清楚的事；方向性的长线计划见下方「路线图」。
+
+- [ ] **把已收藏的两篇总结重跑成真三段式** —— 库里现在还是 Mock 节选。
+      配好模型（见「路线图」1）后按原 URL 重跑 `clip` 即可原地替换，
+      不用先删笔记，URL 唯一约束会接管更新
+- [ ] **收藏管道 HTTP 化** —— 现在只有 CLI（`python -m scripts.clip <url>`）。
+      目标补 `POST /api/clippings`（`server/app/api/routes/clippings.py` 目前只有 `GET /clippings/pdf`）
+      并在前端给一个「粘贴链接」入口，省掉开终端这一步
+- [ ] **清理测试稿** —— `content/sample-vault/clippings/clip-4-more-control-flow-tools.md`
+      是验证 PDF 版式时的 Python 教程稿。确认后按三步删除：删文件 →
+      `DELETE FROM posts WHERE slug LIKE 'clip-4%'` → 重跑 `init_db`
+
+### 待定（等方案，先不动）
+
+- [ ] **纯图文章怎么处理** —— 公众号常有正文全在截图里的文章，去图后不足 200 字即不进检索，
+      命中它时 `retrieve` 直接抛异常、前端提示去看原文 PDF。这是**当前行为不是终态**：
+      候选方案有 OCR 抽字 / 视觉模型描述图片 / 干脆不索引，定下来再做
+- [ ] **PDF 内嵌图的压缩参数** —— 现在 760px 宽、JPEG q70，嫌存档占地方可以再压
+
+### 小项
+
+- [ ] 桌宠名「鱼干」（鲸鱼也说得通）。要换只改 `src/lib/site.ts` 一处
+
 ## 路线图（按依赖顺序）
 
 1. **接入真实语言模型。** 在 `server/.env` 填 `LLM_BASE_URL` 与 `LLM_API_KEY`（两者都需要），
