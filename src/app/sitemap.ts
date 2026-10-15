@@ -1,6 +1,5 @@
 import type { MetadataRoute } from 'next';
-import { listChatter } from '@/lib/chatter';
-import { listPosts } from '@/lib/posts';
+import { listChatter, listPosts } from '@/lib/api';
 import { site } from '@/lib/site';
 
 export const dynamic = 'force-dynamic';
@@ -10,7 +9,7 @@ function day(value: string | null | undefined): string | undefined {
   return value ? value.slice(0, 10) : undefined;
 }
 
-export default function sitemap(): MetadataRoute.Sitemap {
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const base = site.url;
 
   const pages: MetadataRoute.Sitemap = [
@@ -22,14 +21,14 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { url: `${base}/about`, changeFrequency: 'monthly', priority: 0.5 },
   ];
 
-  const posts: MetadataRoute.Sitemap = listPosts().map((post) => ({
+  const posts: MetadataRoute.Sitemap = (await listPosts()).map((post) => ({
     url: `${base}/posts/${encodeURIComponent(post.slug)}`,
     lastModified: day(post.publishedAt),
     changeFrequency: 'monthly',
     priority: 0.8,
   }));
 
-  const chatter: MetadataRoute.Sitemap = listChatter().map((item) => ({
+  const chatter: MetadataRoute.Sitemap = (await listChatter()).map((item) => ({
     url: `${base}/chatter/${encodeURIComponent(item.slug)}`,
     lastModified: day(item.publishedAt),
     changeFrequency: 'monthly',

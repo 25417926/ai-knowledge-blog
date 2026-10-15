@@ -1,5 +1,4 @@
-import { listChatter } from '@/lib/chatter';
-import { listPosts } from '@/lib/posts';
+import { listChatter, listPosts } from '@/lib/api';
 import { site } from '@/lib/site';
 
 export const dynamic = 'force-dynamic';
@@ -26,13 +25,13 @@ type FeedItem = { title: string; link: string; date: string | null; summary: str
  */
 export async function GET() {
   const items: FeedItem[] = [
-    ...listPosts().map((post) => ({
+    ...(await listPosts()).map((post) => ({
       title: post.title,
       link: `${site.url}/posts/${encodeURIComponent(post.slug)}`,
       date: post.publishedAt,
       summary: post.summary,
     })),
-    ...listChatter().map((item) => ({
+    ...(await listChatter()).map((item) => ({
       title: item.title,
       link: `${site.url}/chatter/${encodeURIComponent(item.slug)}`,
       date: item.publishedAt,

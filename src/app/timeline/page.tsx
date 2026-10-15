@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { TimelineControls } from '@/components/TimelineControls';
 import { coverVars } from '@/lib/cover';
-import { listPosts, listTags, type PostListItem } from '@/lib/posts';
+import { listPosts, listTags, type PostListItem } from '@/lib/api';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,12 +30,12 @@ export default async function TimelinePage({
   const view = sp.view === 'matrix' ? 'matrix' : 'chain';
   const category = (sp.category ?? '').trim();
 
-  const tags = listTags();
+  const tags = await listTags();
   // 标签既收 slug 也收名字：旧地址带的是名字，标签条上的链接是 slug，两种都得认
   const rawTag = (sp.tag ?? '').trim();
   const tag = tags.find((item) => item.slug === rawTag || item.name === rawTag)?.slug ?? rawTag;
 
-  const posts = listPosts({ q, tag, category });
+  const posts = await listPosts({ q, tag, category });
 
   // 按年月分组，组内保持 listPosts 的倒序；Map 保序，省一次排序
   const groups = new Map<string, PostListItem[]>();

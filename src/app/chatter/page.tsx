@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ChatterControls } from '@/components/ChatterControls';
 import { PageHeader } from '@/components/PageHeader';
-import { listChatter, listChatterTags } from '@/lib/chatter';
+import { listChatter, listChatterTags } from '@/lib/api';
 import { coverVars } from '@/lib/cover';
 import { isMood, MOODS } from '@/lib/moods';
 
@@ -22,8 +22,10 @@ export default async function ChatterPage({ searchParams }: { searchParams: Prom
   const mood = isMood(rawMood) ? rawMood : '';
   const tag = (sp.tag ?? '').trim();
 
-  const items = listChatter({ q, mood, tag });
-  const tags = listChatterTags();
+  const [items, tags] = await Promise.all([
+    listChatter({ q, mood, tag }),
+    listChatterTags(),
+  ]);
 
   return (
     <main className="mx-auto max-w-[1150px] px-5 pb-8 pt-12 sm:px-8">

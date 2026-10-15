@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { Lightbox } from '@/components/Lightbox';
-import type { Moment } from '@/lib/moments';
+import type { Moment } from '@/lib/api';
 
 /** 宫格数按图片数量自适应：1 张横构图、2/4 张两列、其余三列 */
 function gridClass(count: number): string {

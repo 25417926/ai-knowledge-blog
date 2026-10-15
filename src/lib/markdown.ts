@@ -6,9 +6,24 @@ import rehypeSlug from 'rehype-slug';
 import rehypeStringify from 'rehype-stringify';
 import rehypeShiki from '@shikijs/rehype';
 import type { BuiltinLanguage } from 'shiki';
-import { normalizeKey } from './posts';
 
 const WIKILINK_RE = /\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]/g;
+
+/**
+ * 双链目标归一化。原在 posts.ts，数据层迁去 Python 后 markdown 渲染留在前端，
+ * 这个纯函数随之搬到这里 —— 必须与 server 端 to_slug 保持同一套规则，
+ * 否则 [[标题]] 会在前端解析出不同的 key，指向已存在的文章也会变成「待创建」。
+ */
+function normalizeKey(input: string): string {
+  return input
+    .trim()
+    .replace(/\.md$/i, '')
+    .replace(/[\s/\\]+/g, '-')
+    .replace(/[^\p{L}\p{N}\-_]/gu, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .toLowerCase();
+}
 
 /**
  * 把 Obsidian [[双链]] 转成标准 Markdown 链接。

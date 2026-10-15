@@ -10,6 +10,13 @@ next-env.d.ts
 *.tsbuildinfo
 .DS_Store
 
+# Python 后端
+__pycache__/
+*.py[cod]
+server/.venv/
+server/.env
+.pytest_cache/
+
 # 本地验收截图与临时产物
 .shots/
 docs/*.png

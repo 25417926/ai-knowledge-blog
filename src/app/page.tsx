@@ -2,19 +2,19 @@ import Link from 'next/link';
 import { Carousel, type CarouselItem } from '@/components/Carousel';
 import { StatusCard, ThemeCard } from '@/components/HomeCards';
 import { coverVars } from '@/lib/cover';
-import { listChatter } from '@/lib/chatter';
-import { listMoments } from '@/lib/moments';
-import { listPosts } from '@/lib/posts';
+import { listChatter, listMoments, listPosts } from '@/lib/api';
 import { site } from '@/lib/site';
 
 export const dynamic = 'force-dynamic';
 
 const CAROUSEL_SIZE = 5;
 
-export default function HomePage() {
-  const posts = listPosts();
-  const chatter = listChatter();
-  const moments = listMoments();
+export default async function HomePage() {
+  const [posts, chatter, moments] = await Promise.all([
+    listPosts(),
+    listChatter(),
+    listMoments(),
+  ]);
 
   // 轮播里的日期取到「日」即可——首页不需要精确到秒，那是归档页的事
   const postItems: CarouselItem[] = posts.slice(0, CAROUSEL_SIZE).map((post) => ({

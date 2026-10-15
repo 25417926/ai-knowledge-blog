@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { MomentsBoard } from '@/components/MomentsBoard';
 import { PageHeader } from '@/components/PageHeader';
-import { listMoments } from '@/lib/moments';
+import { listMoments } from '@/lib/api';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,8 +10,8 @@ export const metadata: Metadata = {
   description: '随手记的短动态：读到什么、在哪、想什么。',
 };
 
-export default function MomentsPage() {
-  const moments = listMoments();
+export default async function MomentsPage() {
+  const moments = await listMoments();
 
   return (
     <main className="mx-auto max-w-[1150px] px-5 pb-8 pt-12 sm:px-8">

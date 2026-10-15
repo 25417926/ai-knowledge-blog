@@ -4,7 +4,7 @@ import { notFound } from 'next/navigation';
 import { CodeCopy } from '@/components/CodeCopy';
 import { Lightbox } from '@/components/Lightbox';
 import { Toc } from '@/components/Toc';
-import { getChatter, listChatter } from '@/lib/chatter';
+import { getChatter, listChatter } from '@/lib/api';
 import { coverVars } from '@/lib/cover';
 import { extractHeadings, renderMarkdown } from '@/lib/markdown';
 import { MOODS } from '@/lib/moods';
@@ -15,7 +15,7 @@ type Props = { params: Promise<{ slug: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const item = getChatter(decodeURIComponent(slug));
+  const item = await getChatter(decodeURIComponent(slug));
   if (!item) return { title: '杂谈不存在' };
   return {
     title: item.title,
@@ -32,13 +32,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function ChatterDetailPage({ params }: Props) {
   const { slug } = await params;
-  const item = getChatter(decodeURIComponent(slug));
+  const item = await getChatter(decodeURIComponent(slug));
   if (!item) notFound();
 
   const html = await renderMarkdown(item.content);
   const headings = extractHeadings(html);
 
-  const all = listChatter();
+  const all = await listChatter();
   const index = all.findIndex((entry) => entry.slug === item.slug);
   const newer = index > 0 ? all[index - 1] : null;
   const older = index >= 0 && index < all.length - 1 ? all[index + 1] : null;

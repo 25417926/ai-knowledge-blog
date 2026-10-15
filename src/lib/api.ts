@@ -1,0 +1,177 @@
+/**
+ * Python 后端的 typed fetch 客户端。
+ *
+ * 架构变更（2026-10-15）：Next.js 只做前端，数据层整体搬到 server/（FastAPI + SQLAlchemy）。
+ * 这里所有函数都走 HTTP，返回值与原来 Node 侧 lib 函数逐字对齐 ——
+ * 页面把 import 从 '@/lib/posts' 换成 '@/lib/api' 即可，渲染逻辑零改动。
+ *
+ * baseURL 解析顺序：NEXT_PUBLIC_API_BASE_URL → API_BASE_URL → http://127.0.0.1:8000
+ */
+
+const RAW_BASE =
+  process.env.NEXT_PUBLIC_API_BASE_URL ??
+  process.env.API_BASE_URL ??
+  'http://127.0.0.1:8000';
+
+export const API_BASE = RAW_BASE.replace(/\/+$/, '');
+
+import { isMood, type Mood } from './moods';
+
+export type PostListItem = {
+  id: number;
+  slug: string;
+  title: string;
+  summary: string;
+  category: string;
+  wordCount: number;
+  publishedAt: string | null;
+  tags: string[];
+};
+
+export type PostDetail = PostListItem & {
+  content: string;
+  sourcePath: string;
+  updatedAt: string;
+};
+
+export type TagRow = { id: number; name: string; slug: string; count: number };
+export type CategoryRow = { category: string; count: number };
+export type LinkRef = { slug: string; title: string };
+
+export type GraphData = {
+  nodes: { id: string; slug: string; title: string; category: string; degree: number }[];
+  edges: { source: string; target: string }[];
+};
+
+export type ChatterItem = {
+  id: number;
+  slug: string;
+  title: string;
+  excerpt: string;
+  mood: Mood;
+  tags: string[];
+  cover: string;
+  publishedAt: string | null;
+  wordCount: number;
+};
+
+export type ChatterDetail = ChatterItem & { content: string };
+
+export type Moment = {
+  id: number;
+  content: string;
+  images: string[];
+  location: string;
+  reactionCount: number;
+  publishedAt: string | null;
+};
+
+/** 后端未启动或返回非 2xx 时抛出，页面按「数据不可用」处理 */
+export class ApiError extends Error {
+  constructor(
+    public readonly path: string,
+    public readonly status: number,
+    detail: string,
+  ) {
+    super(`接口 ${path} 返回 ${status}：${detail}`);
+    this.name = 'ApiError';
+  }
+}
+
+/** 情绪是后端自由文本，前端只认枚举里的五个；不认识的一律按 calm，不让页面炸 */
+export function asMood(value: string): Mood {
+  return isMood(value) ? value : 'calm';
+}
+
+async function get<T>(path: string, revalidate = 0): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    // 文章详情等需要每次拿最新内容；列表页同样走 no-store，与原先 force-dynamic 行为一致
+    cache: 'no-store',
+    next: { revalidate },
+  });
+  if (!res.ok) {
+    const detail = (await res.text()).slice(0, 200);
+    throw new ApiError(path, res.status, detail);
+  }
+  return (await res.json()) as T;
+}
+
+// ── 文章 ──────────────────────────────────────────────
+
+export async function listPosts(opts: { q?: string; tag?: string; category?: string } = {}) {
+  const params = new URLSearchParams();
+  if (opts.q) params.set('q', opts.q);
+  if (opts.tag) params.set('tag', opts.tag);
+  if (opts.category) params.set('category', opts.category);
+  const query = params.toString();
+  return get<PostListItem[]>(`/api/posts${query ? `?${query}` : ''}`);
+}
+
+export async function listTags() {
+  return get<TagRow[]>('/api/tags');
+}
+
+export async function listCategories() {
+  return get<CategoryRow[]>('/api/categories');
+}
+
+export async function getPostBySlug(slug: string) {
+  const post = await get<PostDetail | null>(`/api/posts/${encodeURIComponent(slug)}`);
+  return post;
+}
+
+export async function getAllSlugs() {
+  return get<string[]>('/api/posts/slugs');
+}
+
+export async function getLinkIndex() {
+  const index = await get<Record<string, string>>('/api/link-index');
+  return new Map(Object.entries(index));
+}
+
+export async function getGraph() {
+  return get<GraphData>('/api/graph');
+}
+
+export async function getBacklinks(slug: string) {
+  return get<LinkRef[]>(`/api/posts/${encodeURIComponent(slug)}/backlinks`);
+}
+
+export async function getOutgoingLinks(slug: string) {
+  return get<LinkRef[]>(`/api/posts/${encodeURIComponent(slug)}/outgoing`);
+}
+
+// ── 杂谈 ──────────────────────────────────────────────
+
+export async function listChatter(opts: { q?: string; tag?: string; mood?: string } = {}) {
+  const params = new URLSearchParams();
+  if (opts.q) params.set('q', opts.q);
+  if (opts.tag) params.set('tag', opts.tag);
+  if (opts.mood) params.set('mood', opts.mood);
+  const query = params.toString();
+  const items = await get<ChatterItem[]>(`/api/chatter${query ? `?${query}` : ''}`);
+  return items.map((item) => ({ ...item, mood: asMood(item.mood) }));
+}
+
+export async function getChatter(slug: string) {
+  const item = await get<ChatterDetail | null>(`/api/chatter/${encodeURIComponent(slug)}`);
+  return item ? { ...item, mood: asMood(item.mood) } : null;
+}
+
+export async function listChatterTags() {
+  return get<{ name: string; count: number }[]>('/api/chatter-tags');
+}
+
+// ── 说说 ──────────────────────────────────────────────
+
+export async function listMoments(opts: { q?: string; order?: 'desc' | 'asc' } = {}) {
+  const params = new URLSearchParams();
+  if (opts.q) params.set('q', opts.q);
+  if (opts.order) params.set('order', opts.order);
+  const query = params.toString();
+  return get<Moment[]>(`/api/moments${query ? `?${query}` : ''}`);
+}
+
+// ── 博客助手（客户端直连 Python 端） ──────────────────
+
+export const ASK_BASE = `${API_BASE}/api/ask`;

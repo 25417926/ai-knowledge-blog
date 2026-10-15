@@ -6,7 +6,7 @@ import { Lightbox } from '@/components/Lightbox';
 import { Toc } from '@/components/Toc';
 import { coverVars } from '@/lib/cover';
 import { extractHeadings, linkifyWikilinks, renderMarkdown } from '@/lib/markdown';
-import { getBacklinks, getLinkIndex, getOutgoingLinks, getPostBySlug, listPosts } from '@/lib/posts';
+import { getBacklinks, getLinkIndex, getOutgoingLinks, getPostBySlug, listPosts } from '@/lib/api';
 import { site } from '@/lib/site';
 
 export const dynamic = 'force-dynamic';
@@ -22,7 +22,7 @@ const COVER_BACKGROUND = [
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const post = getPostBySlug(decodeURIComponent(slug));
+  const post = await getPostBySlug(decodeURIComponent(slug));
   if (!post) return { title: '文章不存在' };
 
   const path = `/posts/${encodeURIComponent(post.slug)}`;
@@ -44,18 +44,20 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function PostPage({ params }: Props) {
   const { slug } = await params;
-  const post = getPostBySlug(decodeURIComponent(slug));
+  const post = await getPostBySlug(decodeURIComponent(slug));
   if (!post) notFound();
 
-  const linkIndex = getLinkIndex();
+  const linkIndex = await getLinkIndex();
   const html = await renderMarkdown(linkifyWikilinks(post.content, linkIndex));
   const headings = extractHeadings(html);
 
-  const backlinks = getBacklinks(post.slug);
-  const outgoing = getOutgoingLinks(post.slug);
+  const [backlinks, outgoing] = await Promise.all([
+    getBacklinks(post.slug),
+    getOutgoingLinks(post.slug),
+  ]);
 
   // 上下篇从完整列表里就地找，不额外查库：文章量很小，一次 listPosts 够用
-  const all = listPosts();
+  const all = await listPosts();
   const index = all.findIndex((item) => item.slug === post.slug);
   const newer = index > 0 ? all[index - 1] : null;
   const older = index >= 0 && index < all.length - 1 ? all[index + 1] : null;

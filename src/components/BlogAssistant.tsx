@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ASK_BASE } from '@/lib/api';
 
 type Source = { postSlug: string; postTitle: string; heading: string };
 
@@ -65,7 +66,7 @@ export function BlogAssistant() {
     if (!open || loadedRef.current) return;
     loadedRef.current = true;
     // 只接最近两轮：够表达「我记得你刚才问过」，又不至于一打开就是满屏旧问答和出处卡片
-    fetch('/api/blog/ask?limit=4')
+    fetch(`${ASK_BASE}?limit=4`)
       .then((res) => res.json())
       .then((data: HistoryResponse) => {
         setMessages(
@@ -102,7 +103,7 @@ export function BlogAssistant() {
       // 「这篇文章讲了什么」必须锁定当前这篇：即使开关切到「搜索全部」，问的也仍是这篇
       const about = pinToArticle ?? (scopeToArticle ? articleSlug : null);
       try {
-        const res = await fetch('/api/blog/ask', {
+        const res = await fetch(ASK_BASE, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message, about }),
