@@ -7,6 +7,9 @@ import { ASK_BASE } from '@/lib/api';
 
 type Source = { postSlug: string; postTitle: string; heading: string };
 
+/** 工具调用的一步（「检索“线程池 核心参数” → 命中 4 篇」）。历史数据可能缺 label，兜底用 tool 名 */
+type Step = { tool: string; label: string; hits: number; ms: number };
+
 type Message = {
   id: string;
   role: 'user' | 'assistant';
@@ -15,6 +18,8 @@ type Message = {
   mock: boolean;
   /** 流式进行中：正文还在增量到达，末尾显示光标 */
   streaming?: boolean;
+  /** 思考链：这一轮调用过哪些工具、各命中几条。空数组 = 没有工具调用（Mock 与闲聊路径） */
+  steps: Step[];
 };
 
 type AskResponse = {
@@ -23,10 +28,17 @@ type AskResponse = {
   turnId: number;
   model: string;
   mock: boolean;
+  toolTrace?: Step[];
 };
 
 type HistoryResponse = {
-  turns: { id: number; role: string; content: string; sources: Source[] }[];
+  turns: {
+    id: number;
+    role: string;
+    content: string;
+    sources: Source[];
+    toolTrace?: { tool: string; label?: string; hits: number; ms: number }[];
+  }[];
   suggestions?: string[];
 };
 
@@ -34,6 +46,72 @@ type HistoryResponse = {
 function lastHeading(heading: string): string {
   const parts = heading.split('>');
   return parts[parts.length - 1].trim();
+}
+
+/**
+ * 思考链条目：流式进行中逐步列出每次工具调用；结束后折叠成一行摘要，可再展开。
+ *
+ * 它展示的是「确实发生过的事」——每次检索的用词、命中几条、花了多少毫秒，
+ * 全部来自后端 tool_trace（本来就要落库的），不是表演出来的思考过程。
+ * 没有工具调用的消息（Mock 与闲聊路径）整个区域不渲染。
+ */
+function StepTrail({
+  steps,
+  sourceCount,
+  streaming,
+  open,
+  onToggle,
+}: {
+  steps: Step[];
+  sourceCount: number;
+  streaming: boolean;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  if (steps.length === 0) return null;
+  const searches = steps.filter(
+    (s) => s.tool === 'search_posts' || s.tool === 'get_article_overview',
+  ).length;
+
+  const rows = steps.map((s, i) => (
+    <p
+      key={`${s.tool}-${i}`}
+      className="flex items-baseline gap-1.5 text-[11.5px] leading-5 text-ink-dim"
+    >
+      <span className="font-mono text-[10.5px] text-accent-ink">{i + 1}</span>
+      <span className="min-w-0 flex-1">{s.label}</span>
+      <span className="shrink-0">
+        {s.hits > 0 ? `命中 ${s.hits} 条` : '无新增'} · {s.ms}ms
+      </span>
+    </p>
+  ));
+
+  if (streaming) {
+    return (
+      <div className="mb-2 space-y-1 rounded-2xl border border-dashed border-ink-line px-3 py-2">
+        {rows}
+      </div>
+    );
+  }
+  return (
+    <div className="mb-2">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex w-full items-center gap-1.5 rounded-lg px-1 py-0.5 text-left text-[11.5px] text-ink-dim transition-colors hover:text-ink-text"
+      >
+        <span className={open ? '' : 'rotate-180'}>&#9662;</span>
+        <span>
+          {searches > 0 ? `检索 ${searches} 次` : `操作 ${steps.length} 步`}
+          {sourceCount > 0 ? ` · 引用 ${sourceCount} 篇` : ''}
+        </span>
+      </button>
+      {open && (
+        <div className="mt-1 space-y-1 rounded-lg border border-ink-line px-2.5 py-2">{rows}</div>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -90,6 +168,10 @@ export function BlogAssistant() {
   /** 流式过程提示（「正在翻书架…」）；首个 token 到达后让位给正文 */
   const [statusText, setStatusText] = useState<string | null>(null);
   const [hasTokens, setHasTokens] = useState(false);
+  /** 这一轮已经有过工具调用：步骤条接管「正在做什么」，底部占位行退场 */
+  const [hasSteps, setHasSteps] = useState(false);
+  /** 哪条消息的思考链条目是展开的（同一时间只展开一条，null = 全部折叠） */
+  const [stepsOpen, setStepsOpen] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const loadedRef = useRef(false);
 
@@ -114,6 +196,13 @@ export function BlogAssistant() {
             content: t.content,
             sources: t.sources ?? [],
             mock: false,
+            // 改造前落库的 trace 没有 label 字段，兜底显示工具名
+            steps: (t.toolTrace ?? []).map((s) => ({
+              tool: s.tool,
+              label: s.label ?? s.tool,
+              hits: s.hits,
+              ms: s.ms,
+            })),
           })),
         );
         setSuggestions(data.suggestions ?? []);
@@ -142,7 +231,14 @@ export function BlogAssistant() {
     setMessages((prev) =>
       prev.map((m) =>
         m.id === bubbleId
-          ? { ...m, content: data.reply, sources: data.citations, mock: data.mock, streaming: false }
+          ? {
+              ...m,
+              content: data.reply,
+              sources: data.citations,
+              mock: data.mock,
+              streaming: false,
+              steps: data.toolTrace ?? [],
+            }
           : m,
       ),
     );
@@ -188,6 +284,18 @@ export function BlogAssistant() {
         append(String(data.text ?? ''));
       } else if (name === 'status') {
         setStatusText(String(data.text ?? ''));
+      } else if (name === 'step') {
+        // 工具执行完一步：步骤条接住，过程提示撤走（下一轮检索前 status 会再来）
+        const step: Step = {
+          tool: String(data.tool ?? ''),
+          label: String(data.label ?? data.tool ?? ''),
+          hits: Number(data.hits ?? 0),
+          ms: Number(data.ms ?? 0),
+        };
+        setStatusText(null);
+        setMessages((prev) =>
+          prev.map((m) => (m.id === bubbleId ? { ...m, steps: [...m.steps, step] } : m)),
+        );
       } else if (name === 'done') {
         const d = data as unknown as AskResponse;
         setMessages((prev) =>
@@ -224,9 +332,10 @@ export function BlogAssistant() {
       setDraft('');
       setStatusText(null);
       setHasTokens(false);
+      setHasSteps(false);
       setMessages((prev) => [
         ...prev,
-        { id: `u${Date.now()}`, role: 'user', content: message, sources: [], mock: false },
+        { id: `u${Date.now()}`, role: 'user', content: message, sources: [], mock: false, steps: [] },
       ]);
       // 「这篇文章讲了什么」必须锁定当前这篇：即使开关切到「搜索全部」，问的也仍是这篇
       const about = pinToArticle ?? (scopeToArticle ? articleSlug : null);
@@ -234,7 +343,15 @@ export function BlogAssistant() {
       const bubbleId = `s${Date.now()}`;
       setMessages((prev) => [
         ...prev,
-        { id: bubbleId, role: 'assistant', content: '', sources: [], mock: false, streaming: true },
+        {
+          id: bubbleId,
+          role: 'assistant',
+          content: '',
+          sources: [],
+          mock: false,
+          streaming: true,
+          steps: [],
+        },
       ]);
       try {
         const streamed = await askViaStream(bubbleId, message, about);
@@ -331,6 +448,13 @@ export function BlogAssistant() {
                   </p>
                 ) : (
                   <div>
+                    <StepTrail
+                      steps={m.steps}
+                      sourceCount={m.sources.length}
+                      streaming={m.streaming === true}
+                      open={stepsOpen === m.id}
+                      onToggle={() => setStepsOpen((v) => (v === m.id ? null : m.id))}
+                    />
                     {(m.content !== '' || !m.streaming) && (
                       <p className="whitespace-pre-wrap rounded-2xl border border-ink-line bg-ink-soft px-3.5 py-2.5 text-[13px] leading-6 text-ink-text">
                         {m.content}
@@ -362,10 +486,10 @@ export function BlogAssistant() {
               </div>
             ))}
 
-            {/* 首个 token 到达后，过程提示让位给正在生长的正文 */}
-            {busy && !hasTokens && (
-              <p className="text-[12.5px] text-ink-dim">{statusText ?? '正在翻书架…'}</p>
-            )}
+          {/* 首个 token 到达、或步骤条接管后，过程提示让位 */}
+          {busy && !hasTokens && !hasSteps && (
+            <p className="text-[12.5px] text-ink-dim">{statusText ?? '正在翻书架…'}</p>
+          )}
           </div>
 
           {/* 推荐问题常驻在输入框上方：已经聊过几轮之后，随手一点继续追问比空着更好用 */}

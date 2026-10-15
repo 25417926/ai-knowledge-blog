@@ -677,17 +677,40 @@ def mock_rag_reply(citations: list[dict], message: str) -> str:
 # ────────────────────────────────────────────── Function Calling 执行体
 
 
+def _step_label(name: str, args: dict) -> str:
+    """把一次工具调用翻译成人类可读的一行动作。
+
+    同一份 label 同时进 tool_trace（历史回放）和 step 事件（流式过程），
+    两端展示规则只有这一处，不会漂移。
+    """
+    if name == "search_posts":
+        query = str(args.get("query") or "").strip()
+        return f'检索“{clip(query, 18)}”' if query else "检索"
+    if name == "get_article_overview":
+        slug = str(args.get("slug") or "").strip()
+        return f"概览《{clip(slug, 18)}》" if slug else "概览当前文章"
+    if name == "remember_fact":
+        fact = str(args.get("fact") or "").strip()
+        return f"记住“{clip(fact, 18)}”" if fact else "记住一条事实"
+    return f"调用 {name}"
+
+
 @dataclass
 class ToolBox:
     """一次问答内、跨工具调用共享的引用编号本。
 
     同一个 chunk 被多次检索只编号一次（模型无需重复看同一段原文）；
     编号从 1 开始连续递增，最终回答里的 [n] 与 citations 落库顺序逐字对齐。
+
+    emit 非空时（流式路径），每次工具执行完推一个 step 事件，
+    让前端把「它查了什么、命中几条」实时画出来——trace 数据本来就在记，
+    这只是多一个出口。
     """
 
     session: AsyncSession
     agent_id: int
     about: str | None = None
+    emit: Callable[[dict], Awaitable[None]] | None = None
     cited: dict[int, int] = field(default_factory=dict)
     citations: list[dict] = field(default_factory=list)
     trace: list[dict] = field(default_factory=list)
@@ -769,9 +792,13 @@ class ToolBox:
                     hits = 1
         else:
             text = f"未知工具：{name}"
-        self.trace.append(
-            {"tool": name, "args": args, "hits": hits, "ms": int((time.monotonic() - started) * 1000)}
-        )
+        ms = int((time.monotonic() - started) * 1000)
+        label = _step_label(name, args)
+        self.trace.append({"tool": name, "args": args, "hits": hits, "ms": ms, "label": label})
+        if self.emit is not None:
+            await self.emit(
+                {"event": "step", "data": {"tool": name, "label": label, "hits": hits, "ms": ms}}
+            )
         return text
 
 
@@ -833,7 +860,7 @@ async def _run_tool_agent(
     不落 agent_turns（那会污染短期记忆的「近 8 轮」），只把 trace 摘要挂在最终轮次上。
     emit 非空时走流式：正文增量实时推给前端，其余行为与整包版完全一致。
     """
-    box = ToolBox(session=session, agent_id=ctx.agent.id, about=input.about)
+    box = ToolBox(session=session, agent_id=ctx.agent.id, about=input.about, emit=emit)
     messages = build_tool_messages(ctx, input.message)
     reply = ""
     nudged = False
