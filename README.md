@@ -64,9 +64,9 @@ python -m scripts.clip --list           # 查看已收藏
 | `/posts/[slug]` | 文章详情：封顶封面、目录、代码高亮、灯箱、上下篇、出链/反链 |
 | `/projects` | 项目矩阵：搜索 + 技术栈胶囊 + 外链 |
 | `/moments` | 说说流：宫格自适应、排序切换、搜索 |
-| `/friends` | 友链：卡片墙，数据是 `src/lib/friends.ts` 里的 TS 常量（不入库） |
+| `/friends` | 友链：卡片墙，数据入库，由 `/admin/friends` 维护 |
 | `/about` | 关于：自我介绍、时间线、技能栈、兴趣、联系方式 |
-| `/admin` `/admin/posts` `/admin/logs` | 后台：口令登录、文章增删改、对话日志（未配 `ADMIN_PASSWORD` 则整块禁用） |
+| `/admin` `/admin/posts` `/admin/friends` `/admin/logs` | 后台：口令登录、文章增删改、友链增删改、对话日志（未配 `ADMIN_PASSWORD` 则整块禁用） |
 | `/robots.txt` `/sitemap.xml` `/rss.xml` | 由 `app/robots.ts`、`app/sitemap.ts`、`app/rss.xml/route.ts` 生成 |
 
 `/blog` 与 `/blog/:slug` 在 `next.config.mjs` 里做了 308 永久重定向。
@@ -85,14 +85,13 @@ src/                       前端（Next.js App Router）
     projects/        项目矩阵
     friends/         友链
     about/           关于
-    admin/           后台：layout 是认证闸门 + 侧栏，posts 列表/编辑器，logs 日志面板
+    admin/           后台：layout 是认证闸门 + 侧栏，posts 列表/编辑器，friends 友链管理，logs 日志面板
     robots.ts sitemap.ts rss.xml/route.ts
     error.tsx not-found.tsx
   lib/
     api.ts           唯一的数据出口：typed fetch 客户端，字段与后端 camelCase 契约对齐
     admin.ts         后台的 fetch 客户端（改走同源 /api 代理，见「后台」一节）
     markdown.ts      Markdown → HTML（remark/rehype + Shiki 代码高亮）+ 目录抽取
-    friends.ts       友链清单（编译期常量，不入库）
     projects.ts      项目清单（编译期常量，不入库）
     cover.ts         分类配色：卡片封面 / 图谱节点 / 友链首字母块共用
     site.ts          站点文案与个人信息的唯一出处
@@ -120,7 +119,7 @@ server/                   后端（FastAPI + SQLAlchemy）
     api/routes/
       content.py      内容查询接口
       ask.py          博客助手问答（整包 + SSE 流式双路由）与会话回放
-      admin.py        后台接口：口令登录 + 文章 CRUD + 对话日志（全部要过 require_admin）
+      admin.py        后台接口：口令登录 + 文章 CRUD + 友链 CRUD + 对话日志（全部要过 require_admin）
   scripts/
     init_db.py       建表 + 种子 + Vault 导入（幂等）
     clip.py          微信收藏管道：抓取 → 总结 → 入库 → 建索引
@@ -128,6 +127,7 @@ server/                   后端（FastAPI + SQLAlchemy）
 content/
   sample-vault/      示例 Vault，用来跑通全流程（clippings/ 是收藏管道的自动入库目录）
   moments.json       说说种子数据
+  friends.json       友链种子数据（仅在 friends 表为空时灌，之后归后台管）
   town/agents.json   角色设定（人格、口吻），博客助手也在这里
 ```
 
@@ -144,6 +144,11 @@ content/
 新文章的反向链接要靠「所有笔记一起解析」才接得上。删除 = 删文件 + 删行
 （`chunks` / `links` / `post_tags` 走外键级联），并清掉不再被引用的标签。
 换言之，后台替你在维护 Obsidian 仓库。
+
+**友链是上面这条规则的例外，因为它没有文件。** `/admin/friends` 改完只写 `friends` 表：
+友链是纯展示数据，不进 RAG 也不进图谱，所以「文件覆盖数据库」的坑不存在。
+种子 `content/friends.json` 只在表为空时灌一次——后台删掉的条目不会被 `init_db` 复活，
+之后一切以数据库为准。
 
 **后台的登录态走同源代理，不直连后端。** 口令校验通过后签一个带到期时间的 token
 写进 httpOnly cookie（标准库 `hmac`，不引 JWT）；前端不用 `lib/api.ts` 那套绝对地址，
@@ -233,7 +238,7 @@ Mock 与闲聊路径没有工具调用，就什么都不画，不表演一段假
 
 **服务端与客户端的边界是硬约束，不是风格问题。** Node 时代这条约束来自
 `node:sqlite` 的 null 原型对象；拆分之后它变成了「前端组件不允许 import 任何会发 HTTP 的
-业务模块」——所有取数走 `src/lib/api.ts`，纯常量（`friends.ts` / `projects.ts` / `site.ts`）
+业务模块」——所有取数走 `src/lib/api.ts`，纯常量（`projects.ts` / `site.ts`）
 另存无依赖模块，客户端组件才能安全引用。
 
 **代码高亮走 Shiki 双主题。** `@shikijs/rehype` 只往每个 token 写 `--shiki-light` /
@@ -286,8 +291,10 @@ Mock 与闲聊路径没有工具调用，就什么都不画，不表演一段假
 - [x] 阶段 5c：桌宠重做 —— 换成 PixiJS 帧动画状态机（待机呼吸/眨眼、悬停、点击表情+气泡、
       双击摸头、拖走小碎步、松手重力落地弹跳、挂机煮饭剧情），素材 20.7MB → 0.86MB WebP
 - [x] 阶段 7：砍杂谈 · 加友链 · 助手入口并到桌宠 —— 杂谈前后端连同 6 篇原文一起下线；
-      新增 `/friends`（数据是 `src/lib/friends.ts` 常量）；助手撤掉右下角浮动按钮，
+      新增 `/friends`；助手撤掉右下角浮动按钮，
       改由桌宠单击派发 `blog-assistant:open` 唤出，agent 与会话依旧唯一
+- [x] 友链改成后台维护 —— `friends` 表 + `/admin/friends` 增删改（原先写死在 `src/lib/friends.ts`），
+      前台 `/friends` 改动态取数；种子 `content/friends.json` 仅在表空时灌
 - [ ] 阶段 5b：Wiki 自动沉淀与出处回链（`wiki_entries` / `wiki_sources` 两张表已建但零引用）
 
 ## 待办（TODO）

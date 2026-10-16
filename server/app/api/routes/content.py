@@ -14,6 +14,7 @@ from ...services import content as svc
 from ...database import get_session
 from ...schemas import (
     CategoryRow,
+    FriendItem,
     GraphData,
     LinkRef,
     Moment,
@@ -75,6 +76,14 @@ async def post_outgoing(slug: str, session: AsyncSession = Depends(get_session))
 async def link_index(session: AsyncSession = Depends(get_session)) -> Any:
     """双链解析表：[[标题]]/[[slug]] → 真实 slug，供前端渲染 wikilink。"""
     return await svc.link_index(session)
+
+
+# ── 友链 ──────────────────────────────────────────────
+
+
+@router.get("/friends", response_model=list[FriendItem])
+async def friends_list(session: AsyncSession = Depends(get_session)) -> Any:
+    return await svc.list_friends(session)
 
 
 # ── 说说 ──────────────────────────────────────────────

@@ -70,6 +70,31 @@ class GraphData(ORMModel):
     edges: list[dict]
 
 
+# ── 友链 ────────────────────────────────────────────────
+
+
+class FriendItem(ORMModel):
+    id: int
+    name: str
+    href: str
+    description: str
+    tags: list[str]
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _parse_tags(cls, v: object) -> object:
+        """tags 在库里是 JSON 字符串，出库时摊成数组；脏数据一律当空。"""
+        if isinstance(v, str):
+            import json
+
+            try:
+                parsed = json.loads(v)
+                return [str(t) for t in parsed if t] if isinstance(parsed, list) else []
+            except Exception:
+                return []
+        return v
+
+
 # ── 说说 ────────────────────────────────────────────────
 
 

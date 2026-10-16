@@ -75,6 +75,14 @@ async function get<T>(path: string, revalidate = 0): Promise<T> {
   return (await res.json()) as T;
 }
 
+export type FriendItem = {
+  id: number;
+  name: string;
+  href: string;
+  description: string;
+  tags: string[];
+};
+
 // ── 文章 ──────────────────────────────────────────────
 
 export async function listPosts(opts: { q?: string; tag?: string; category?: string } = {}) {
@@ -128,6 +136,12 @@ export async function listMoments(opts: { q?: string; order?: 'desc' | 'asc' } =
   if (opts.order) params.set('order', opts.order);
   const query = params.toString();
   return get<Moment[]>(`/api/moments${query ? `?${query}` : ''}`);
+}
+
+// ── 友链 ──────────────────────────────────────────────
+
+export async function listFriends() {
+  return get<FriendItem[]>('/api/friends');
 }
 
 // ── 博客助手（客户端直连 Python 端） ──────────────────

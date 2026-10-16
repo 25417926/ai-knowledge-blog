@@ -25,6 +25,7 @@ from app.database import DB_PATH, init_schema, AsyncSessionLocal  # noqa: E402
 from app.models import (  # noqa: E402
     Agent,
     Clipping,
+    Friend,
     Link,
     Moment,
     Post,
@@ -221,6 +222,33 @@ async def seed_moments(session) -> int:
     return inserted
 
 
+async def seed_friends(session) -> int:
+    """友链种子。
+
+    **只在表为空时灌**：友链上线后就归后台 /admin/friends 管，
+    若像说说那样「按内容去重补充」，在后台删掉的条目会被下一次 init_db 变回来。
+    """
+    file = PROJECT_ROOT / "content" / "friends.json"
+    if not file.exists():
+        print("  · 未找到 content/friends.json，跳过友链初始化")
+        return 0
+    existing = (await session.execute(select(Friend.id).limit(1))).scalar_one_or_none()
+    if existing is not None:
+        return 0
+    items = json.loads(file.read_text(encoding="utf-8"))
+    for item in items:
+        session.add(
+            Friend(
+                name=item["name"],
+                href=item["href"],
+                description=item.get("description", ""),
+                tags=json.dumps(item.get("tags", []), ensure_ascii=False),
+            )
+        )
+    await session.commit()
+    return len(items)
+
+
 async def import_vault(session, vault_dir: Path) -> dict:
     notes = collect_notes(vault_dir)
     stats = {"posts": 0, "tags": 0, "links": 0, "resolvedLinks": 0, "chunks": 0}
@@ -359,6 +387,7 @@ async def main() -> None:
     async with AsyncSessionLocal() as session:
         print(f"  ✓ 角色初始化完成，共 {await seed_agents(session)} 个 agent")
         print(f"  ✓ 说说初始化完成，新增 {await seed_moments(session)} 条")
+        print(f"  ✓ 友链初始化完成，新增 {await seed_friends(session)} 条")
 
         vault_dir = PROJECT_ROOT / "content" / "sample-vault"
         if not vault_dir.exists():

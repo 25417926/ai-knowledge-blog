@@ -127,6 +127,29 @@ export const adminUpdatePost = (slug: string, input: AdminPostInput) =>
 export const adminDeletePost = (slug: string) =>
   request<{ ok: boolean }>(`/posts/${encodeURIComponent(slug)}`, { method: 'DELETE' });
 
+// ── 友链 ──────────────────────────────────────────────
+
+export type AdminFriend = {
+  id: number;
+  name: string;
+  href: string;
+  description: string;
+  tags: string[];
+};
+
+export type AdminFriendInput = Omit<AdminFriend, 'id'>;
+
+export const adminListFriends = () => request<AdminFriend[]>('/friends');
+
+export const adminCreateFriend = (input: AdminFriendInput) =>
+  request<{ ok: boolean }>('/friends', { method: 'POST', body: JSON.stringify(input) });
+
+export const adminUpdateFriend = (id: number, input: AdminFriendInput) =>
+  request<{ ok: boolean }>(`/friends/${id}`, { method: 'PUT', body: JSON.stringify(input) });
+
+export const adminDeleteFriend = (id: number) =>
+  request<{ ok: boolean }>(`/friends/${id}`, { method: 'DELETE' });
+
 // ── 日志 ──────────────────────────────────────────────
 
 export const adminLogs = (limit = 60) => request<AdminLog>(`/logs?limit=${limit}`);

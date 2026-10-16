@@ -14,9 +14,10 @@ from sqlalchemy import Integer, String, and_, case, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from ..models import Chunk, Link, Moment as MomentRow, Post, PostTag, Tag
+from ..models import Chunk, Friend, Link, Moment as MomentRow, Post, PostTag, Tag
 from ..schemas import (
     CategoryRow,
+    FriendItem,
     LinkRef,
     Moment,
     PostDetail,
@@ -257,6 +258,15 @@ async def outgoing_links(session: AsyncSession, slug: str) -> list[LinkRef]:
         .order_by(Post.title)
     )
     return [LinkRef(slug=r.slug, title=r.title) for r in (await session.execute(stmt)).all()]
+
+
+# ── 友链 ──────────────────────────────────────────────
+
+
+async def list_friends(session: AsyncSession) -> list[FriendItem]:
+    """按录入顺序返回，前台就是后台里看到的那个次序。"""
+    rows = (await session.execute(select(Friend).order_by(Friend.id))).scalars().all()
+    return [FriendItem.model_validate(r) for r in rows]
 
 
 # ── 说说 ──────────────────────────────────────────────

@@ -1,0 +1,20 @@
+[
+  {
+    "name": "示例笔记站",
+    "href": "https://example.com/",
+    "description": "把读过的东西写成能复述出来的样子，长文为主，更新很稳。",
+    "tags": ["笔记", "长文"]
+  },
+  {
+    "name": "示例后端手记",
+    "href": "https://example.com/backend",
+    "description": "线上问题排查与源码阅读，写得很细，事故复盘尤其好看。",
+    "tags": ["Java", "排查"]
+  },
+  {
+    "name": "示例 Agent 观察",
+    "href": "https://example.com/agent",
+    "description": "追 Agent 工程的最新实践，动手多于转述。",
+    "tags": ["Agent", "RAG"]
+  }
+]

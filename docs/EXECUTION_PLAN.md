@@ -24,11 +24,11 @@
 |---|---|
 | 提交 | `cab4eb3` refactor(pet): 宠物只做陪伴，撤掉问答入口 |
 | 远程 | https://github.com/25417926/ai-knowledge-blog（public，分支 `main`） |
-| 前端 | `src/` 45 个源文件 / 5862 行（Next.js 15 App Router · React 19 · TS · Tailwind 3.4） |
-| 后端 | `server/` 18 个 `.py` / 3902 行（FastAPI · SQLAlchemy · aiosqlite） |
-| 数据库 | `data/blog.db`，`server/app/schema.sql` 定义 **16 张表** |
-| 内容 | 12 篇笔记 · 131 切分块 · 36 条双链 · 24 个标签 · 8 条说说 · 2 篇收藏 · 3 个角色 |
-| 问答存量 | 166 轮对话（其中 83 轮提问）· 274 条引用 · 3 个会话 |
+| 前端 | `src/` 45 个源文件 / 6156 行（Next.js 15 App Router · React 19 · TS · Tailwind 3.4） |
+| 后端 | `server/` 18 个 `.py` / 4143 行（FastAPI · SQLAlchemy · aiosqlite） |
+| 数据库 | `data/blog.db`，`server/app/schema.sql` 定义 **17 张表** |
+| 内容 | 12 篇笔记 · 131 切分块 · 36 条双链 · 24 个标签 · 8 条说说 · 3 条友链 · 2 篇收藏 · 3 个角色 |
+| 问答存量 | 170 轮对话（其中 85 轮提问）· 282 条引用（247 条带出处）· 3 个会话 |
 | 测试 | **0 个**（无 `*.test.*` / `*.spec.*`） |
 
 ---
@@ -48,7 +48,7 @@
 | Agent 内核 | `agents` / `agent_memories` / `agent_relations` / `agent_sessions` / `agent_turns` / `citations` |
 | 博客助手「知行」 | 浮动面板、引用卡片、思考链；`/api/ask` 整包 + `/api/ask/stream` SSE |
 | 真实模型 | DeepSeek（OpenAI 兼容）+ Function Calling 工具循环（≤3 轮）；无 Key 自动回落 Mock |
-| 后台 | `/admin` 口令登录、文章 CRUD、保存写回 md 并重建索引、对话日志面板 |
+| 后台 | `/admin` 口令登录、文章 CRUD、友链 CRUD、保存写回 md 并重建索引、对话日志面板 |
 | SEO | `robots` / `sitemap` / `rss` 动态生成；软 404 已修（根级 `loading.tsx` 已移除） |
 | 引用锚点 | `chunk_id` → `post_slug + heading_path + quote`（2026-10-16，见 §3） |
 
@@ -65,7 +65,7 @@
 - **向量混合检索**：`chunks.embedding` 字段与 `EMBEDDING_*` 配置项已预留，零代码写它。
 - **收藏管道 HTTP 化**：缺 `POST /api/clippings` 与前端「粘贴链接」入口，目前只能跑 CLI。
 - **纯图文章**：正文全在截图里的收藏稿，当前不进检索、命中即抛错提示去看原文 PDF。
-- **测试**：见 §5。
+- **测试**：见 §6。
 
 ---
 
@@ -111,7 +111,35 @@ chunk 尚存活的直接取 slug/heading；其余用 `quote` 前缀在现有 `ch
 
 ---
 
-## 4. 待办（按依赖顺序）
+## 4. 本轮：友链改后台维护（2026-10-16）
+
+**为什么改。** 友链原先是 `src/lib/friends.ts` 里的编译期常量——加一个人要改代码、重新构建。
+它本来就是会变的数据，不该住在源码里。
+
+**改法。** 入库 + 后台 CRUD，复用文章那套后台外壳：
+
+| 层 | 落点 |
+|---|---|
+| 表 | `friends`（name / href / description / tags / created_at / updated_at） |
+| 公开读 | `GET /api/friends`；前台 `/friends` 改 `force-dynamic` 动态取数 |
+| 后台写 | `GET/POST /api/admin/friends`、`PUT/DELETE /api/admin/friends/{id}`，界面 `/admin/friends` |
+| 种子 | `content/friends.json`，**只在 `friends` 表为空时灌** |
+
+**两个刻意的选择。**
+
+1. **只写库，不写文件。** 文章必须写回 md（否则下次 `init_db` 把后台改动反向覆盖），
+   而友链不进 RAG、不进图谱、没有对应文件，自然没有那条坑。
+   种子的「表空才灌」是配套保险：后台删掉的条目不会被下一次 `init_db` 复活。
+2. **`href` 只放行 `http(s)://`。** 它最终渲染成 `<a href>`，放行 `javascript:` 等于开一个注入口子。
+   重复链接返回 409，不为此加数据库唯一约束。
+
+**验收**：连跑两次 `init_db`，第二次友链新增 0 条（种子不复活）；
+`POST` / `PUT` / `DELETE /api/admin/friends` 全程可用，`/friends` 与后台列表同步刷新；
+生产构建通过，`/admin/friends` 静态预渲染、`/friends` 转为动态。
+
+---
+
+## 5. 待办（按依赖顺序）
 
 ### P1 · 自动摘要 —— 「会自动总结」的正解
 
@@ -175,7 +203,7 @@ chunk 尚存活的直接取 slug/heading；其余用 `quote` 前缀在现有 `ch
 
 ---
 
-## 5. 技术债
+## 6. 技术债
 
 | # | 项 | 现状 | 处置建议 |
 |---|---|---|---|
@@ -194,7 +222,7 @@ chunk 尚存活的直接取 slug/heading；其余用 `quote` 前缀在现有 `ch
 
 ---
 
-## 6. 验收基线
+## 7. 验收基线
 
 ```bash
 # 后端（另开终端）
@@ -212,7 +240,8 @@ CODEBUDDY_SAFE_DELETE_ENABLED=0 \
 
 - [ ] `/` `/timeline` `/projects` `/moments` `/friends` `/about` 全部 200
 - [ ] `/posts/<真实slug>` 200；`/posts/no-such-post` **404**（防软 404 回归）
-- [ ] `/api/posts` `/api/tags` `/api/categories` `/api/graph` `/api/moments` 全部 200；`/api/chatter` **404**
+- [ ] `/api/posts` `/api/tags` `/api/categories` `/api/graph` `/api/moments` `/api/friends` 全部 200；`/api/chatter` **404**
+- [ ] 后台 `/admin/friends` 能增删改，改完 `/friends` 立刻同步（友链只写库，不需要重建索引）
 - [ ] `/api/ask` 返回 `citations`，每条带 `postSlug` / `postTitle` / `heading`
 - [ ] `/sitemap.xml` 含 `friends`、不含 `chatter`
 - [ ] **重跑一次 `python -m scripts.init_db`，`citations.post_slug` 非空条数不变**（引用不再随导入断链）

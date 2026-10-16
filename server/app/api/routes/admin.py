@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import time
 from datetime import date
@@ -24,12 +25,13 @@ from typing import Any
 import frontmatter
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_session
-from ...models import Post, PostTag, Tag
+from ...models import Friend, Post, PostTag, Tag
 from ...services import agent_chat as svc
+from ...services.content import list_friends
 from scripts.init_db import PROJECT_ROOT, import_vault, to_slug
 
 from .ask import ASSISTANT_SLUG, SESSION_KEY
@@ -276,6 +278,91 @@ async def admin_delete_post(
     await session.execute(delete(Tag).where(Tag.id.not_in(select(PostTag.tag_id))))
     await session.commit()
     return {"ok": True, "slug": slug}
+
+
+# ── 友链 ──────────────────────────────────────────────
+#
+# 与文章不同，友链没有对应的 md 文件，改完只写库 —— 它是纯展示数据，
+# 不参与 RAG 与图谱，也就没有「文件覆盖数据库」那条坑。
+# 种子（content/friends.json）只在表为空时灌，所以这里删掉的条目不会被 init_db 复活。
+
+
+class FriendBody(BaseModel):
+    name: str = ""
+    href: str = ""
+    description: str = ""
+    tags: list[str] = []
+
+
+def _friend_values(body: FriendBody) -> dict[str, Any]:
+    """校验并摊平输入。href 只放行 http(s)：它最终会渲染成 <a href>，
+    放行 javascript: 之类等于在页面上开一个注入口子。"""
+    name = body.name.strip()
+    href = body.href.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="站点名不能为空")
+    if not href:
+        raise HTTPException(status_code=400, detail="链接不能为空")
+    if not href.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="链接要以 http:// 或 https:// 开头")
+    return {
+        "name": name,
+        "href": href,
+        "description": body.description.strip(),
+        "tags": json.dumps([t.strip() for t in body.tags if t.strip()], ensure_ascii=False),
+        "updated_at": func.now(),
+    }
+
+
+async def _assert_href_free(session: AsyncSession, href: str, exclude_id: int | None) -> None:
+    stmt = select(Friend.id).where(Friend.href == href)
+    if exclude_id is not None:
+        stmt = stmt.where(Friend.id != exclude_id)
+    if (await session.execute(stmt)).scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail=f"链接 {href} 已经在友链里了")
+
+
+@router.get("/admin/friends", dependencies=[Depends(require_admin)])
+async def admin_list_friends(session: AsyncSession = Depends(get_session)) -> Any:
+    return await list_friends(session)
+
+
+@router.post("/admin/friends", dependencies=[Depends(require_admin)])
+async def admin_create_friend(
+    body: FriendBody, session: AsyncSession = Depends(get_session)
+) -> dict[str, Any]:
+    values = _friend_values(body)
+    await _assert_href_free(session, values["href"], None)
+    session.add(Friend(**values))
+    await session.commit()
+    return {"ok": True}
+
+
+@router.put("/admin/friends/{friend_id}", dependencies=[Depends(require_admin)])
+async def admin_update_friend(
+    friend_id: int, body: FriendBody, session: AsyncSession = Depends(get_session)
+) -> dict[str, Any]:
+    exists = (
+        await session.execute(select(Friend.id).where(Friend.id == friend_id))
+    ).scalar_one_or_none()
+    if exists is None:
+        raise HTTPException(status_code=404, detail="这条友链已经不在了")
+    values = _friend_values(body)
+    await _assert_href_free(session, values["href"], friend_id)
+    await session.execute(update(Friend).where(Friend.id == friend_id).values(**values))
+    await session.commit()
+    return {"ok": True}
+
+
+@router.delete("/admin/friends/{friend_id}", dependencies=[Depends(require_admin)])
+async def admin_delete_friend(
+    friend_id: int, session: AsyncSession = Depends(get_session)
+) -> dict[str, Any]:
+    result = await session.execute(delete(Friend).where(Friend.id == friend_id))
+    await session.commit()
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="这条友链已经不在了")
+    return {"ok": True}
 
 
 # ── 对话日志 ──────────────────────────────────────────

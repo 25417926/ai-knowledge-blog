@@ -229,6 +229,21 @@ class Moment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default="datetime('now')")
 
 
+# ── 友链层 ──────────────────────────────────────────────
+
+
+class Friend(Base):
+    __tablename__ = "friends"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    href: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    tags: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default="datetime('now')")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default="datetime('now')")
+
+
 # ── 配置 ──────────────────────────────────────────────
 
 

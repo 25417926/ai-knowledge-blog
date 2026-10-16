@@ -180,6 +180,20 @@ CREATE TABLE IF NOT EXISTS clippings (
 
 CREATE INDEX IF NOT EXISTS idx_clippings_created ON clippings(created_at DESC);
 
+-- ========== 友链层 ==========
+-- 互相看得上眼的站点。条目少但会变（换链接、加人），所以入库由后台维护，
+-- 而不是像 projects 那样写死在源码常量里；tags 存 JSON 数组。
+
+CREATE TABLE IF NOT EXISTS friends (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT    NOT NULL,
+  href        TEXT    NOT NULL,
+  description TEXT    NOT NULL DEFAULT '',
+  tags        TEXT    NOT NULL DEFAULT '[]',
+  created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
 -- ========== 说说层 ==========
 -- 短动态：一段话 + 0..9 张图 + 可选地点。images 同样存 JSON 数组。
 
