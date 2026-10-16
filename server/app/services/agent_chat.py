@@ -670,8 +670,9 @@ def build_messages(ctx: ReplyContext, citations: list[dict], message: str) -> li
         ]
         if any(c.get("pdf_url") for c in citations):
             lines.append(
-                "注意：带 PDF 存档的片段出自收藏文章——「三段式总结」小节是压缩转述，"
-                "「原文」小节才是全文；两者说法不一致时以原文为准，并优先引用原文段的编号。"
+                "注意：带 PDF 存档的片段出自收藏文章——正文是 AI 摘抄（压缩转述），"
+                "「原文存档」或「原文」小节才是全文；两者说法不一致时以原文为准，"
+                "并优先引用原文段的编号。"
             )
     lines.append("回答保持口语化，控制在 2-4 句，不要用列表和标题。")
     history = [
@@ -869,8 +870,8 @@ def build_tool_messages(ctx: ReplyContext, message: str) -> list[dict]:
         "4. 用户问题缺少关键信息时（例如没说是哪篇文章），先用一句话追问，不要假设；",
         "5. 用户用陈述句说出关于自己的事实时，调用 remember_fact 记下；疑问句不要记；",
         "6. 回答保持口语化，2-4 句，不要用列表和标题。",
-        "7. 检索到的片段若出自收藏文章（分类 clippings）：「三段式总结」小节是压缩转述，"
-        "「原文」小节才是全文；两者不一致时以原文为准，优先引用原文段的编号。",
+        "7. 检索到的片段若出自收藏文章（分类 clippings）：正文是 AI 摘抄（压缩转述），"
+        "「原文存档」或「原文」小节才是全文；两者不一致时以原文为准，优先引用原文段的编号。",
     ]
     history = [
         {"role": "assistant" if t["role"] == "assistant" else "user", "content": t["content"]}

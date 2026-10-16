@@ -46,13 +46,14 @@ cd server && VAULT_DIR="/path/to/your/vault" python -m scripts.init_db
 
 ```bash
 cd server
-python -m scripts.clip <url>            # 抓取 → 三段式总结 → 写 clippings/ 笔记 → 建索引
+python -m scripts.clip <url>            # 抓取 → 笔记体摘抄 → 写 clippings/ 笔记 → 建索引
 python -m scripts.clip <url> --paste    # 公众号反爬时：跳过抓取，粘贴全文（第一行当标题）
 python -m scripts.clip --list           # 查看已收藏
 ```
 
-抓取用 trafilatura，失败自动降级粘贴；总结为三段式（是什么 / 核心观点 / 对我的启发），
-未配 LLM 时出节选式 Mock 总结。URL 唯一，重复收藏原地更新。收藏稿落在
+抓取用 trafilatura，失败自动降级粘贴；摘抄按手写笔记的体例压一遍（开头一句导语、
+正文按原文脉络分节、要点前加粗关键词、末尾收一句总结），未配 LLM 时出节选式 Mock 摘抄。
+URL 唯一，重复收藏原地更新。收藏稿落在
 `content/sample-vault/clippings/`，与手写笔记同库，立刻可被 AI 助手检索引用。
 
 ## 路由
@@ -122,7 +123,7 @@ server/                   后端（FastAPI + SQLAlchemy）
       admin.py        后台接口：口令登录 + 文章 CRUD + 友链 CRUD + 对话日志（全部要过 require_admin）
   scripts/
     init_db.py       建表 + 种子 + Vault 导入（幂等）
-    clip.py          微信收藏管道：抓取 → 总结 → 入库 → 建索引
+    clip.py          微信收藏管道：抓取 → 摘抄 → 入库 → 建索引
   requirements.txt
 content/
   sample-vault/      示例 Vault，用来跑通全流程（clippings/ 是收藏管道的自动入库目录）

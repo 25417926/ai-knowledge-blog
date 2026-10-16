@@ -146,7 +146,7 @@ chunk 尚存活的直接取 slug/heading；其余用 `quote` 前缀在现有 `ch
 | | |
 |---|---|
 | **目标** | 未标注 summary 的笔记自动生成摘要，写回 frontmatter |
-| **动作** | 复用 `scripts/clip.py` 已有的三段式提示词（是什么 / 核心观点 / 对我的启发）对空 summary 的 post 批量生成，写回 md 再跑 `import_vault` 重建 |
+| **动作** | 复用 `scripts/clip.py` 已有的摘抄提示词（导语 / 分节 / 加粗要点 / 收尾，见笔记体例）对空 summary 的 post 批量生成，写回 md 再跑 `import_vault` 重建 |
 | **改动面** | 复用收藏管道，不新建模块、不新建表 |
 | **验收** | 12 篇笔记 summary 全非空；`/` 卡片墙与 `/timeline` 的摘要不再空缺 |
 | **注意** | 这是「阶段 5b」重定义后的形态——**不是**新建 `wiki_entries` 那一层 |

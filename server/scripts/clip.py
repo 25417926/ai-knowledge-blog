@@ -9,12 +9,13 @@
 四段流水线（收集段的去重任 clippings 表的 URL 唯一约束）：
   抓取：httpx 带浏览器 UA 拉 HTML，trafilatura 抽正文；失败或正文过短
         （公众号反爬的典型表现）自动降级为粘贴模式；
-  总结：三段式（是什么 / 核心观点 / 对我的启发）；无 LLM Key 时出节选式
-        Mock 总结，并明说「这是节选不是转述」；
+  摘抄：按手写笔记的体例压一遍——开头一句导语，正文按原文脉络分节、
+        节内要点前加粗关键词，末尾收一句总结；无 LLM Key 时出节选式
+        Mock 摘抄，并明说「这是节选不是转述」；
   入库：写 content/sample-vault/clippings/ 下的 Obsidian 格式笔记。
         文件名带 clip- 前缀——手写笔记是裸标题，撞名时覆盖的会是收藏稿，
         不会动到自己的笔记。原文渲染成 PDF 存档进 clippings.pdf 列，笔记里
-        只留三段式总结 + 下载链接——原文全文有 PDF 这一份就够，再贴一遍
+        只留摘抄 + 下载链接——原文全文有 PDF 这一份就够，再贴一遍
         正文等于同一份内容存两份；PDF 生成失败时才退回把原文贴进笔记。
   索引：复用 scripts.init_db.import_vault。原文不进笔记，但也不能从检索里消失——
         另存一份去图的「检索用原文」到 clippings.index_text，import_vault 按
@@ -78,18 +79,14 @@ CLIPPINGS_DIR = VAULT_DIR / "clippings"
 MIN_TEXT = 200  # 正文低于此长度视为抓取失败，走粘贴降级
 MIN_INDEX_CHARS = 200  # 检索用原文低于此长度：图片为主的文章，检索基本只能命中标题
 
-SUMMARY_PROMPT = """请基于下面的文章全文写三段式中文摘要，严格按以下结构输出 Markdown，不要输出结构之外的任何内容：
+SUMMARY_PROMPT = """请把下面的文章压成一篇中文摘抄，严格照下面的体例输出 Markdown：
 
-### 是什么
-一句话说明这篇文章讲什么，不超过 50 字。
+1. 开头是一个引用块（以「> 」起行），内容就是导语本身——说清这篇讲了什么、覆盖哪几块，不超过 60 字。注意「导语」两个字只是这段的说明，不要写进输出。
+2. 接着 2~4 个二级标题小节，形如「## 一、小节名」。小节名按原文自己的脉络起，不要套「是什么 / 核心观点 / 对我的启发」这类固定模板。
+3. 每个小节 2~5 条要点，每条以「- 」起行，先用 ** 加粗一个关键词，再用一句话说明。只留关键概念与结论，例子和铺陈压掉。
+4. 末尾是一个引用块，写这篇最值得记住的一点，同样不要写标签。
 
-### 核心观点
-列出 3~5 个关键论点或知识点，每点一行，以 - 开头。
-
-### 对我的启发
-这篇文章对一个正在学习 AI / Java 技术栈的开发者有什么可借鉴之处，1~2 句。
-
-要求：只依据原文概括，不要引入原文没有的信息；原文没有明显观点就少写，不要编造。
+只输出上述内容，体例之外一个字都不要多写。只依据原文概括，不要引入原文没有的信息；原文没有观点就少写，不要编造。
 
 文章标题：{title}
 文章正文：
@@ -220,19 +217,19 @@ def _lead_paragraphs(text: str, count: int = 2) -> list[str]:
 
 
 def mock_summary(title: str, text: str) -> str:
-    """无 LLM Key 的节选式总结：明说不是转述，与 Mock 聊天的口径一致。"""
-    picks = "\n".join(f"> {_trim(p)}" for p in _lead_paragraphs(text)) or "> （原文为空）"
+    """无 LLM Key 的节选式摘抄：明说不是转述，与 Mock 聊天的口径一致。"""
+    picks = "\n".join(f"- {_trim(p)}" for p in _lead_paragraphs(text)) or "- （原文为空）"
     return (
-        "> ⚠️ 未配置 LLM，以下是原文开头节选，不是转述。"
-        "在 server/.env 配好 LLM_API_KEY 后重新收藏即可生成三段式总结。\n\n"
-        f"### 是什么\n{title}\n\n"
-        f"### 核心观点\n{picks}\n\n"
-        "### 对我的启发\n（配置 LLM 后生成）"
+        f"> {title}\n\n"
+        "> ⚠️ 未配置 LLM，以下为原文开头节选，不是转述。"
+        "在 server/.env 配好 LLM_API_KEY 后重新收藏即可生成笔记体摘抄。\n\n"
+        f"## 一、原文开头节选\n\n{picks}\n\n"
+        "> （配置 LLM 后生成）"
     )
 
 
 async def summarize(title: str, text: str) -> tuple[str, str]:
-    """三段式总结。返回 (Markdown, 来源标签：llm/mock/error)。"""
+    """笔记体摘抄。返回 (Markdown, 来源标签：llm/mock/error)。"""
     if not llm_configured():
         return mock_summary(title, text), "mock"
     try:
@@ -240,7 +237,7 @@ async def summarize(title: str, text: str) -> tuple[str, str]:
             [
                 {
                     "role": "system",
-                    "content": "你是一个严谨的知识管理助手，擅长把长文压缩成可检索的结构化摘要。",
+                    "content": "你是一个严谨的知识管理助手，擅长把长文压成一篇可检索的结构化摘抄。",
                 },
                 {
                     "role": "user",
@@ -255,10 +252,13 @@ async def summarize(title: str, text: str) -> tuple[str, str]:
 
 
 def one_liner(summary_md: str, title: str) -> str:
-    """从「是什么」小节取一句话当 frontmatter summary；取不到就用标题。"""
-    match = re.search(r"###\s*是什么\s*\n+(.+)", summary_md)
-    line = match.group(1).strip() if match else ""
-    return _trim(line, 80) if line else title
+    """取摘抄开头的导语当 frontmatter summary；开头不是引用块（如总结失败）就退回标题。"""
+    for raw in summary_md.split("\n"):
+        line = raw.strip()
+        if not line:
+            continue
+        return _trim(line.lstrip(">").strip(), 80) if line.startswith(">") else title
+    return title
 
 
 # ────────────────────────────────────────────── 原文 PDF 存档
@@ -580,7 +580,7 @@ def write_note(
         # 同源相对链接：Next 侧把 /api 代理到后端，博客里点开就是 PDF
         pdf_section = (
             "## 原文 PDF\n\n"
-            "本文的 AI 总结自以下文档；PDF 是收藏时留存的原文全文，原链接失效也能看：\n\n"
+            "本文的 AI 摘抄自以下文档；PDF 是收藏时留存的原文全文，原链接失效也能看：\n\n"
             f"- 《{title}》· {chars} 字 · [打开原文 PDF](/api/clippings/pdf?url={quote(url)})\n\n"
         )
         # 原文只留 PDF 这一份：笔记里再贴一遍，读的时候同一篇内容要读两遍
@@ -594,7 +594,7 @@ def write_note(
             f"# {title}\n\n"
             f"> 来源：[{url}]({url}) · 收藏于 {date.today().isoformat()} · "
             "本文由收藏管道自动整理\n\n"
-            f"## 三段式总结\n\n{summary_md}\n\n"
+            f"{summary_md}\n\n"
             f"{pdf_section}"
             f"{original_section}"
         ),
@@ -699,9 +699,9 @@ async def clip(url: str, paste: bool) -> None:
     chars = _count_chars(article["text"])
     print(f"  ✓ 《{article['title']}》· {chars} 字")
 
-    print("▸ 生成三段式总结")
+    print("▸ 生成摘抄")
     summary_md, tag = await summarize(article["title"], article["text"])
-    print(f"  ✓ 总结完成（{tag}）")
+    print(f"  ✓ 摘抄完成（{tag}）")
 
     print("▸ 生成原文 PDF 存档")
     try:
