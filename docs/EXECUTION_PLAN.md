@@ -22,7 +22,7 @@
 
 | 项 | 值 |
 |---|---|
-| 提交 | `337f04f` feat(blog): 支持 Obsidian callout 渲染…（本地领先 `origin/main` = `cab4eb3` 四个提交，未 push） |
+| 提交 | 本地 HEAD 与 `origin/main` 一致（自 `cab4eb3` 起的 7 个提交已全部推送） |
 | 远程 | https://github.com/25417926/ai-knowledge-blog（public，分支 `main`） |
 | 前端 | `src/` 45 个源文件 / 6299 行（Next.js 15 App Router · React 19 · TS · Tailwind 3.4） |
 | 后端 | `server/` 18 个 `.py` / 4145 行（FastAPI · SQLAlchemy · aiosqlite） |
