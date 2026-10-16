@@ -1,257 +1,220 @@
-# 执行文档 · AI 个人博客（单端）
+# 执行文档 · AI 个人博客
 
-> 生成于 2026-10-15，依据对仓库的逐文件检索（非凭记忆）。
+> 更新于 2026-10-16，数据来自对仓库与数据库的逐项实测（非凭记忆）。
 > 状态标记：✅ 已完成 · 🟡 部分完成 / 有条件可用 · ❌ 未开始 · 🗑 已下线
 >
-> 本文是**当前生效的执行文档**。`BLOG_REPLICA_PLAN.md` 是「内容站 1:1 复刻」阶段的定档记录，
-> 该阶段已全部交付，仅作留档备查，不再作为行动依据。
-
----
-
-## ⚠️ 2026-10-15 勘误（晚于上方快照，以本节为准）
-
-本文快照生成于**前后端拆分之前**，以下事实已过期，请以 README「设计原则」为当前准绳：
-
-1. **架构已拆分**：Next.js 只做前端，数据层 / RAG / Agent 内核迁至 `server/`
-   （FastAPI + SQLAlchemy + aiosqlite）。`node:sqlite`、`src/lib/` 下 9 个数据层文件、
-   `src/app/api`、`scripts/` 已全部删除；DDL 唯一出处是 `server/app/schema.sql`。
-2. **启动方式已变**：`cd server && python -m scripts.init_db && python -m uvicorn app.main:app --reload`
-   + 另开终端 `npm run dev`。venv 在 `~/.workbuddy/binaries/python/envs/blog-server`。
-3. **问答接口已变**：`POST /api/ask`（后端直连），不再是 `/api/blog/ask`。
-4. **Function Calling 已上线（阶段 6b）**：配置 LLM 后意图识别由模型通过工具循环完成
-   （`search_posts` / `get_article_overview` / `remember_fact`，≤3 轮），
-   引用连续编号、`about` 硬约束、`agent_turns.tool_trace` 落库、阈值兜底（1.0）、
-   无 tools 端点自动降级。**Mock 路径行为与拆分前完全一致**（M1-M6 回归通过）。
-5. **快照中的数字**（提交号、`src/` 行数、76 轮问答等）为 2026-10-15 上午的值，仅作趋势参考。
-
-下文各节保留原样，供对照演进用。
+> **本文只讲三件事：做到哪了、接下来做什么、欠了什么。**
+> 架构、目录结构、启动方式、设计取舍一律以根目录 `README.md` 为唯一出处，本文不复述——
+> 同一件事写两份，必然有一份先烂，这正是本文上一版出问题的原因。
+> 同目录 `BLOG_REPLICA_PLAN.md` 是「内容站 1:1 复刻」阶段的定档留档，已停更，不作行动依据。
 
 ---
 
 ## 0. 一句话现状
 
-博客端**主干已全部交付并上线 GitHub**（阅读体验、RAG 问答、Agent 内核、SEO 都在）。
-小镇端已砍。剩下的全是**增强项**：接真实模型、向量检索、日志面板、Wiki 沉淀、后台写作、补测试。
-其中「实时日志面板」的数据层已经躺在那儿，是性价比最高的一块。
+主干全部交付且可复现：Next.js 阅读端 + FastAPI 数据层 + RAG 问答 + Agent 内核 + 后台写作，
+零外部服务依赖、无 Key 也能全流程演示。小镇端已下线。剩下的是增强项与债务清理：
+自动摘要与落地导览（重定义后的 5b）、向量检索、收藏管道 HTTP 化、测试。
 
 ---
 
-## 1. 仓库快照
+## 1. 快照（2026-10-16 实测）
 
 | 项 | 值 |
 |---|---|
-| 远程仓库 | https://github.com/25417926/ai-knowledge-blog（**public**，默认分支 `main`） |
-| 提交 | `2e88637` feat: 初始化项目（88 文件 / 11489 行 / 0.37MB） |
-| 代码规模 | `src/` 48 个源文件（29 个 `.tsx`）/ 6100 行 |
-| 数据库 | `data/blog.db`，`src/lib/schema.sql` 定义 **14 张表** |
-| 内容量 | 10 篇笔记 · 42 切分块 · 31 条双链 · 23 个标签 · 6 篇杂谈 · 8 条说说 · 3 个角色 |
-| 问答存量 | 76 轮对话（`agent_turns`）· 111 条引用（`citations`） |
+| 提交 | `cab4eb3` refactor(pet): 宠物只做陪伴，撤掉问答入口 |
+| 远程 | https://github.com/25417926/ai-knowledge-blog（public，分支 `main`） |
+| 前端 | `src/` 45 个源文件 / 5862 行（Next.js 15 App Router · React 19 · TS · Tailwind 3.4） |
+| 后端 | `server/` 18 个 `.py` / 3902 行（FastAPI · SQLAlchemy · aiosqlite） |
+| 数据库 | `data/blog.db`，`server/app/schema.sql` 定义 **16 张表** |
+| 内容 | 12 篇笔记 · 131 切分块 · 36 条双链 · 24 个标签 · 8 条说说 · 2 篇收藏 · 3 个角色 |
+| 问答存量 | 166 轮对话（其中 83 轮提问）· 274 条引用 · 3 个会话 |
 | 测试 | **0 个**（无 `*.test.*` / `*.spec.*`） |
-| 技术栈 | Next.js 15.1 (App Router) · React 19 · TS 5.7 · Tailwind 3.4 · node:sqlite · unified/Shiki |
 
 ---
 
-## 2. 功能进度（按模块拆分）
+## 2. 功能进度
 
-### 2.1 工程与构建 ✅
+### 2.1 已交付 ✅
 
-脚手架、`npm run setup` 一键初始化、Vault 导入脚本、`.env.example` 全量配置项。
-零原生依赖（`node:sqlite` 内置），换机器只要 Node ≥ 22.5。
-
-**已知坑**：本机 `npx` 会段错误，须用全路径调 `node_modules/next/dist/bin/next`；
-`next build` 批量删 `.next` 会被沙箱守卫拦下，构建前加 `CODEBUDDY_SAFE_DELETE_ENABLED=0`。
-
-### 2.2 数据层 ✅
-
-`vault.ts` 解析 frontmatter / `[[双链]]` / 按标题切分；`schema.sql` 是项目脊椎。
-内容只存一份：`posts.content` → `chunks`（供 RAG）→ `links`（供图谱），三种用途复用同一份数据。
-
-### 2.3 阅读端 ✅
-
-| 路由 | 能力 |
+| 模块 | 一句话 |
 |---|---|
-| `/` | 首页卡片墙：资料卡 + 文章/杂谈两组轮播 + 状态卡 + 主题卡 |
-| `/timeline` | 归档：搜索 + 标签 + `?q=&tag=&view=` URL 同步 + 时间线/矩阵双视图 |
-| `/posts/[slug]` | 封面 + 目录 + 代码高亮 + 灯箱 + 上下篇 + 出链/反链 + JSON-LD |
-| `/projects` | 项目矩阵：搜索 + 技术栈胶囊 + 外链 |
-| `/moments` | 说说流：宫格自适应 + 排序切换 + 搜索 |
-| `/chatter` `/chatter/[slug]` | 杂谈：情绪枚举 + 标签 + 搜索 + 详情页 |
-| `/about` | 自我介绍、时间线、技能栈、兴趣、联系方式 |
+| 工程与构建 | 脚手架、Vault 导入脚本、`.env.example` 全量配置项；零原生依赖 |
+| 阅读端 | `/` 卡片墙 · `/timeline` 双视图归档 · `/posts/[slug]` · `/projects` · `/moments` · `/friends` · `/about` |
+| Markdown 管线 | remark/rehype + Shiki 双主题零重渲染、目录、行号、复制、灯箱 |
+| 主题与氛围 | 暗/亮双主题、氛围背景、开屏、弹幕、PixiJS 桌宠「溟月」 |
+| 内容数据层 | `posts` / `chunks` / `links` / `post_tags`，内容只存一份，三种用途复用 |
+| RAG 检索 | 中文二元组 + IDF；标题 3.0 / 小节 1.6 / 正文 1.0；`RAG_MIN_SCORE=1.0` 兜底 |
+| Agent 内核 | `agents` / `agent_memories` / `agent_relations` / `agent_sessions` / `agent_turns` / `citations` |
+| 博客助手「知行」 | 浮动面板、引用卡片、思考链；`/api/ask` 整包 + `/api/ask/stream` SSE |
+| 真实模型 | DeepSeek（OpenAI 兼容）+ Function Calling 工具循环（≤3 轮）；无 Key 自动回落 Mock |
+| 后台 | `/admin` 口令登录、文章 CRUD、保存写回 md 并重建索引、对话日志面板 |
+| SEO | `robots` / `sitemap` / `rss` 动态生成；软 404 已修（根级 `loading.tsx` 已移除） |
+| 引用锚点 | `chunk_id` → `post_slug + heading_path + quote`（2026-10-16，见 §3） |
 
-`/blog` → `/timeline`、`/blog/:slug` → `/posts/:slug` 在 `next.config.mjs` 层做 308
-（放配置层是因为页面内重定向只能退化成 `meta refresh`，拿不到真 308）。
+### 2.2 已下线 🗑
 
-### 2.4 Markdown 渲染管线 ✅
+- **Godot 2D 小镇端**（2026-10-14）：代码与素材备份在项目根 `_town_backup_2026-10-14.zip`。
+- **杂谈**（2026-10-16）：前后端 15 个牵连点（表 / 路由 / 页面 / 组件 / `moods.ts` / 导航 /
+  sitemap / rss / 首页轮播 / 统计口径）全链路移除，6 篇原文与 `chatter` 表一并删除。
+  桌宠单击让位给「唤出助手」，双击摸头仍说原来的闲话（`site.pet.lines`），
+  单击话术改由新增的 `site.pet.askLines` 提供。
 
-`markdown.ts`：remark/rehype + `@shikijs/rehype`。**双主题零重渲染**——
-插件只往每个 token 写 `--shiki-light` / `--shiki-dark` 两个 CSS 变量，显示哪套由 `.dark` 决定；
-行号用 CSS 计数器、复制按钮由 `CodeCopy.tsx` 客户端补，不改 Shiki 输出结构。
+### 2.3 未开工 ❌
 
-### 2.5 视觉与氛围 ✅
-
-暗/亮双主题（`localStorage`）、氛围背景、开屏动画、悬浮弹幕、像素猫桌宠（可拖动 / 可聊天 / 可喂鱼干）。
-主题偏好存于 `town-theme` 键名 —— 小镇下线时**刻意没改**，改了会丢访客已存偏好。
-
-### 2.6 RAG 检索 🟡（关键词版可用，向量通道预留）
-
-`retrieve.ts`：中文二元组切词 + IDF 打分，标题权重 3.0 / 小节 1.6 / 正文 1.0。
-刻意不引向量库——chunks 只有 42 条，全量扫更快且结果确定可复现。
-`chunks.embedding BLOB` 字段已建，`.env.example` 已有 `EMBEDDING_*` 三项，**但没有任何代码写它**。
-
-### 2.7 Agent 内核 ✅
-
-六张表：`agents` / `agent_memories` / `agent_relations` / `agent_sessions` / `agent_turns` / `citations`。
-记忆分短期（`short`）与长期（`long`），同表用 `memory_kind` 区分；好感度 `score` 只增不减，
-`stage` 派生：stranger(<6) / acquaintance(6) / familiar(20) / close(45)。
-入口是 `agent-chat.ts` 的 `talk()` 与 `readLog()`。
-
-### 2.8 博客助手 ✅
-
-`BlogAssistant.tsx` 全站浮动面板，可限定单篇提问；`/api/blog/ask` 落 `agent_turns` + `citations`，
-`readLog()` 提供历史回放。回答必须建立在检索片段上，检索不到就直接说不确定。
-无 LLM Key 时回落 Mock 模式（原文节选 + 出处拼装），全流程可演示。
-
-### 2.9 SEO / 可访问性 ✅
-
-`robots.ts` / `sitemap.ts` / `rss.xml/route.ts` 均动态生成；各页独立 Metadata。
-**软 404 已修**：根级 `app/loading.tsx` 被移除（它会让 `force-dynamic` 详情页在 `notFound()` 之前
-冲出 200）。`/posts/<不存在>` 与 `/chatter/<不存在>` 现返回 404 —— 这是回归测试的重点保护对象。
-
-### 2.10 版本控制 ✅（2026-10-15 新增）
-
-GitHub + `gh` CLI（装在 `~/.workbuddy/binaries/gh/bin/gh.exe`，不在 PATH）。
-`.gitignore` 排除 `node_modules/` `.next/` `.shots/` `docs/*.png` `_town_backup_*.zip` `.workbuddy/` `data/*.db`。
-
-### 2.11 小镇端 🗑（2026-10-14 下线）
-
-Godot 2D 地图 + 自製素材 + NPC 对话整体删除。代码与素材备份在项目根 `_town_backup_2026-10-14.zip`。
-`agents` 六张表保留（博客助手住在里面），`projects.ts` 里的小镇作品卡片保留（作品集是历史记录）。
-
-### 2.12 后台写作与登录 ❌
-
-**零代码**：没有任何 auth / session / cookie / 登录页。`settings` 表建了但零引用，
-`ADMIN_PASSWORD` 在 `.env.example` 里躺着。内容更新目前靠「改 Markdown → `npm run vault:import`」。
-
-### 2.13 Wiki 自动沉淀 ❌
-
-`wiki_entries` / `wiki_sources` 两张表**已建但零引用**（schema 先行，代码没跟上）。
-「问 → 答 → 补文档」闭环未实现。
-
-### 2.14 实时日志面板 ❌（**数据层已就绪**）
-
-`agent_turns` 已有 76 轮真实数据，`readLog(sessionKey, agentSlug, limit)` 已导出且 ask 路由在用。
-差的只是一个看得见的面板。
-
-### 2.15 测试 ❌
-
-零单测、零 e2e 脚本入库。此前所有验收都是临时脚本跑完即弃。
+- **向量混合检索**：`chunks.embedding` 字段与 `EMBEDDING_*` 配置项已预留，零代码写它。
+- **收藏管道 HTTP 化**：缺 `POST /api/clippings` 与前端「粘贴链接」入口，目前只能跑 CLI。
+- **纯图文章**：正文全在截图里的收藏稿，当前不进检索、命中即抛错提示去看原文 PDF。
+- **测试**：见 §5。
 
 ---
 
-## 3. 待办执行计划（按依赖顺序）
+## 3. 本轮：引用锚点修复（2026-10-16）
 
-### P0 · 接入真实语言模型 —— 零代码成本，先做
+**症状。** `citations` 表 274 条引用里 260 条 `chunk_id` 为 NULL。界面上不报错——
+历史回放的出处卡片静默消失，只有查库才看得见。
+
+**根因。** `import_vault` 每导入一次就把该 post 的 chunks 全删重插（`init_db.py:296`），
+`chunks.id` 是自增主键，旧 id 全部消失，外键 `ON DELETE SET NULL` 顺手把回链擦成 NULL。
+**只要再跑一次 `init_db` 引用就断一次**——这不是一次性故障，是每次导入都复现的设计缺陷。
+
+**处置。** 锚点换成稳定业务键，不再依赖派生数据的自增主键：
+
+| | 旧 | 新 |
+|---|---|---|
+| 锚 | `chunk_id`（自增，重导即失效） | `post_slug` + `heading_path` + `quote` |
+| 稳定性 | 每次导入必断 | slug 由 `import_vault` upsert，永不漂移 |
+| 可读性 | 引用不自包含，必须 join 到 chunks | 自包含：哪篇、哪节、原话是什么 |
+
+引用自此即使文章被改写、切分块被重建、文章被删，仍能完整显示出处。
+
+**迁移。** 见 `server/app/database.py` 的 `_migrate_citations_anchor()`，旧行按两种办法回捞：
+chunk 尚存活的直接取 slug/heading；其余用 `quote` 前缀在现有 `chunks.body` 里比对
+（`quote` 落库时就是 `body.strip()[:400]`，是精确逆运算，不是模糊匹配）。
+回捞不到的保留原样（`post_slug` 为空，前端不渲染），**不删数据**。
+
+实测结果（2026-10-16）：
+
+| | 条数 |
+|---|---|
+| 迁移前有锚的引用 | 14 / 274 |
+| 迁移后带出处的引用 | **239 / 274**（14 条原本存活 + 225 条捞回） |
+| 未能回捞 | 35（集中在被重新抓取过的收藏稿——那部分原文本身已替换，捞不回是应该的） |
+
+**验收**：连跑两次 `init_db`（chunks 全量重建，id 从 3072 漂到 3333），
+引用条数稳定在 274 / 239 不变——修复前同样操作会把它们全部清成 NULL。
+`GET /api/ask`（历史回放）68 轮问答共 239 个出处卡片恢复渲染；
+`POST /api/ask` 与 `/api/ask/stream` 的新引用均正确落 `post_slug + heading_path`。
+
+**刻意没做。** 不改 `import_vault` 的「删除重建」策略——chunks 是检索用的派生数据，
+重建本身没有错，错的是把它易变的主键当锚。
+
+---
+
+## 4. 待办（按依赖顺序）
+
+### P1 · 自动摘要 —— 「会自动总结」的正解
 
 | | |
 |---|---|
-| **目标** | 从 Mock 切到真实回答 |
-| **动作** | `.env` 填 `LLM_BASE_URL` + `LLM_API_KEY` + `LLM_MODEL`（三者都要）。协议 OpenAI 兼容，换 baseURL 即可接 DeepSeek / 通义 / 智谱 / Ollama |
-| **改动面** | 无代码改动；提示词已要求「先结论、再标引用 [n]」 |
-| **验收** | `/api/blog/ask` 返回 `mock: false`，回答仍带可点回的引用角标 |
-| **注意** | `.env` 已在 `.gitignore`，**别提交** |
+| **目标** | 未标注 summary 的笔记自动生成摘要，写回 frontmatter |
+| **动作** | 复用 `scripts/clip.py` 已有的三段式提示词（是什么 / 核心观点 / 对我的启发）对空 summary 的 post 批量生成，写回 md 再跑 `import_vault` 重建 |
+| **改动面** | 复用收藏管道，不新建模块、不新建表 |
+| **验收** | 12 篇笔记 summary 全非空；`/` 卡片墙与 `/timeline` 的摘要不再空缺 |
+| **注意** | 这是「阶段 5b」重定义后的形态——**不是**新建 `wiki_entries` 那一层 |
 
-### P1 · 向量混合检索 —— 关键词保精度、向量保召回
+### P2 · 落地导览 —— 访客进门知道从哪读
+
+| | |
+|---|---|
+| **目标** | 把「AI 快速定位访客想了解什么」的反面补齐：进站不再只有卡片墙 |
+| **动作** | 把库里那篇《知识地图总览》提升为主题的入口页；`src/lib/api.ts` 已导出但零调用的 `listCategories()` 接上，做分类导航 |
+| **改动面** | 首页 + 归档页；不新增检索功能 |
+| **验收** | 从首页两步内能到达任一篇笔记，且能看出这篇文章属于哪个主题 |
+| **前置** | 无 |
+
+### P3 · 关系网召回补一档 —— 现有只有显式双链
+
+| | |
+|---|---|
+| **目标** | 能回答「跟这篇有关但没互相链接的文章」 |
+| **动作** | 在 `links`（显式 `[[双链]]`）之外增加「共同标签 + 共同被引用」的隐式边，供图谱与「相关文章」用 |
+| **改动面** | 后端图谱查询 + `/posts/[slug]` 相关文章区 |
+| **验收** | 孤立文章（无双链）也能被推荐出 2–3 篇相邻文章 |
+| **前置** | 建议 P2 之后（入口先通，再谈召回） |
+
+### P4 · 向量混合检索 —— 关键词保精度、向量保召回
 
 | | |
 |---|---|
 | **目标** | 关键词 + embedding 混合排序 |
-| **动作** | ① `vault-import.ts` 里调 embedding API，把向量写进 `chunks.embedding` BLOB；② `retrieve.ts` 的 `scoreChunk` 增加余弦项并与 IDF 加权融合 |
-| **改动面** | `scripts/vault-import.ts` · `src/lib/retrieve.ts` |
-| **验收** | 无 Key 时仍走纯关键词（不报错）；限定单篇提问的命中率不低于当前 |
+| **动作** | 导入时调 embedding API 写入 `chunks.embedding` BLOB；`_score_chunk` 增加余弦项与 IDF 加权融合 |
+| **改动面** | `server/scripts/init_db.py` · `server/app/services/agent_chat.py` |
+| **验收** | 无 Key 时仍走纯关键词不报错；限定单篇提问的命中率不低于当前 |
 | **铁律** | 应用层算余弦，**不引向量库**（pgvector / Docker 一律不碰） |
 
-### P2 · 实时日志面板 —— 性价比最高，数据已在库里
+### P5 · 收藏管道 HTTP 化
 
 | | |
 |---|---|
-| **目标** | 把 76 轮对话变成看得见的东西 |
-| **动作** | ① 新增 `src/app/api/blog/log/route.ts`，包一层 `readLog()`；② 新增面板组件，挂在 `BlogAssistant` 里或独立路由 |
-| **改动面** | 新路由 + 新组件（数据层 `agent-chat.ts` 不动） |
-| **验收** | 能看到每轮的问题 / 回答 / 引用 / 时间；不破坏现有浮动面板 |
-| **前置** | 无（P0/P1 都不阻塞它） |
+| **目标** | 在浏览器里贴链接就能收藏，不用开终端 |
+| **动作** | 补 `POST /api/clippings`（复用 `scripts/clip.py` 的抓取+总结流程），前端加粘贴入口 |
+| **改动面** | 后端新增一条路由 + 后台或独立页面加一个表单 |
+| **验收** | 贴一个 URL 进去，文章出现在 vault 里且立刻可被助手引用 |
 
-### P3 · Wiki 沉淀闭环 —— 表已就绪
-
-| | |
-|---|---|
-| **目标** | 「问 → 答 → 补文档」正循环 |
-| **动作** | 从 `agent_turns` + `citations` 里找「高频被问但站内没有」的主题 → 生成 `wiki_entries` 草稿 + `wiki_sources` 出处回链 |
-| **改动面** | `src/lib/agent-chat.ts` 或新建 wiki 查询模块 + 页面 |
-| **验收** | 一条问答能一键沉淀成 wiki 条目，条目带出处；条目不重复创建 |
-| **前置** | 建议 P2 之后做（日志面板先让你看见问题在哪） |
-
-### P4 · 后台写作与登录 —— 最大一块，**建议拆三步走**
-
-| 子项 | 内容 | 验收 |
-|---|---|---|
-| **4a 登录** | cookie session + `ADMIN_PASSWORD` 校验 + 登录页 + 路由守卫 | 未登录访问写操作 401 / 跳登录；session 过期可控 |
-| **4b 编辑器** | 文章 CRUD，Markdown 编辑 + frontmatter 表单 + 草稿 | 能新建并保存文章，`posts` 表可见 |
-| **4c 索引热更新** | 保存即切分入库（`chunks` / `links` / `tags`），不用手动跑 `vault:import` | 新文章立刻能被 RAG 检索到 |
-
-**前置**：无硬依赖，但 4c 会碰到 `vault.ts` 的导入逻辑，**先读清楚再改**，别复制一份切分算法。
-**风险**：这是唯一需要认真对待安全的一块（登录、CSRF、XSS——Markdown 渲染管线已经在管 XSS，别绕过它）。
-
-### P5 · 补齐测试 —— 收益被严重低估
+### P6 · 补齐测试 —— 收益被严重低估
 
 | 优先级 | 对象 | 理由 |
 |---|---|---|
-| 1 | `retrieve.ts` 打分函数 | 纯函数，最好测；P1 改它之前必须有网兜住 |
-| 2 | 软 404 回归 | `/posts/<不存在>`、`/chatter/<不存在>` 必须 404。这个 bug 咬过一次，值得一条 e2e 永久看守 |
-| 3 | `vault.ts` 双链解析 / 切分 | 改了会静默影响图谱与检索 |
-| 4 | `agent-chat.ts` 好感度与记忆 | `score` 只增不减、`stage` 派生逻辑易错 |
+| 1 | `_score_chunk` 打分函数 | 纯函数最好测；P4 改它之前必须有网兜住 |
+| 2 | 软 404 回归 | `/posts/<不存在>` 必须 404。这个 bug 咬过一次，值得一条 e2e 永久看守 |
+| 3 | 双链解析 / 切分（`content.py`） | 改了会静默影响图谱与检索 |
+| 4 | 好感度与记忆（`agent_chat.py`） | `score` 只增不减、`stage` 派生逻辑易错 |
 
-**验收**：`node --test` 全绿；e2e 用 `playwright-core` + `channel: 'msedge'`（系统 Edge，不下载 Chromium）。
-
----
-
-## 4. 技术债与风险
-
-| # | 项 | 处置建议 |
-|---|---|---|
-| 1 | `scripts/godot-font.py` 是小镇时代遗留，引用 `res://` 路径，现已无用 | 删（需你点头） |
-| 2 | 无 `.gitattributes`，Windows 下提交刷 `LF→CRLF` 警告 | 加一个统一 LF，或接受现状 |
-| 3 | `settings` / `wiki_entries` / `wiki_sources` 三张表**建了没人用** | 要么按 P3/P4 接上，要么从 schema 删掉，别永久悬空 |
-| 4 | 零测试 | 见 P5 |
-| 5 | 内容量小（10 篇 / 42 块），RAG 演示效果有限 | 用 `VAULT_DIR=/path npm run vault:import` 导真实 Vault |
-| 6 | `content/town/agents.json` 路径带 `town`，但里面住的是博客助手 | 功能上没问题；改名会牵动 `db-init.ts` + README，暂不动 |
-| 7 | 站点品牌仍叫「赛博小镇」，功能已无小镇 | 保留是刻意决策（不改品牌）；想改名说一声 |
-| 8 | 仓库是 **public**，笔记与站点文案对外可见 | 想转私有：`gh repo edit --visibility private --accept-visibility-change-consequences` |
-| 9 | 本机构建/预览必须用全路径 node，`npx` 不可用 | 已记入项目记忆，照做即可 |
+**验收**：`pytest` 全绿；e2e 可用 `playwright-core` + `channel: 'msedge'`（系统 Edge，不下载 Chromium）。
 
 ---
 
-## 5. 验收基线（现在就能跑的检查）
+## 5. 技术债
+
+| # | 项 | 现状 | 处置建议 |
+|---|---|---|---|
+| 1 | `settings` 表 | 全仓零引用，只有 `models.py` 一个空壳类 | 删（本次未动，等你点头） |
+| 2 | `wiki_entries` / `wiki_sources` | 零引用；且 `wiki_sources.chunk_id` 会跟着重导一起断（本轮刚拆掉同款锚） | 删表；「自动沉淀」改用 P1 + P2 的形态 |
+| 3 | `Pet.tsx` | 307 行，零引用（上一版桌宠，回退窗口已过） | 删，连 `public/pets/*.webp` 6 张旧素材 |
+| 4 | `NVIDIA Corporation/umdlogs/` | 显卡驱动留下的空目录，非项目内容 | 删 |
+| 5 | `_town_backup_2026-10-14.zip` | 小镇备份，已被 `.gitignore` 排除但仍占工作区 | 挪到仓库外的备份处 |
+| 6 | 无 `.gitattributes` | Windows 上提交刷 `LF→CRLF` 警告 | 加一个统一 LF，或接受现状 |
+| 7 | 零测试 | 见 P6 | — |
+| 8 | 内容量小 | 12 篇 / 131 块，检索演示效果有限 | 用 `VAULT_DIR=/path python -m scripts.init_db` 导真实 Vault |
+| 9 | `content/town/agents.json` | 路径带 `town`，但里面住的是博客助手 | 功能无碍，改名会牵动后端与 README，暂不动 |
+| 10 | 站点品牌仍叫「赛博小镇」 | 功能已无小镇 | 保留是刻意决策，想改名说一声 |
+| 11 | 仓库是 public | 笔记与站点文案对外可见 | 想转私有：`gh repo edit --visibility private --accept-visibility-change-consequences` |
+| 12 | 本机构建/预览坑 | 必须用全路径 node，`npx` 不可用；`next build` 要加 `CODEBUDDY_SAFE_DELETE_ENABLED=0` | 已记入项目记忆，照做即可 |
+
+---
+
+## 6. 验收基线
 
 ```bash
-npm install && npm run setup && npm run dev          # 本地跑通，零 Key 也能全流程演示
+# 后端（另开终端）
+cd server && python -m scripts.init_db && python -m uvicorn app.main:app --reload --port 8000
+
+# 前端
+npm install && npm run dev
+
+# 生产构建（本机必须带前缀、别用 npx）
 CODEBUDDY_SAFE_DELETE_ENABLED=0 \
-  node_modules/.bin/next build                        # 生产构建（本机必须带前缀、别用 npx）
+  "C:/Users/guo/.workbuddy/binaries/node/versions/22.22.2-2/node.exe" node_modules/next/dist/bin/next build
 ```
 
 逐项核对：
 
-- [ ] `/` `/timeline` `/projects` `/moments` `/chatter` `/about` 全部 200
-- [ ] `/posts/<真实slug>` 200，`/posts/no-such-post` **404**（防软 404 回归）
-- [ ] `/chatter/<不存在>` **404**
-- [ ] `/api/blog/ask` 200，Mock 模式下返回带 `citations`
-- [ ] `/sitemap.xml` 22 条 `<loc>`、`/robots.txt` 不含 `/godot-town/`
-- [ ] 浏览器实测：导航六项、桌宠在、助手面板在、控制台 0 错误
+- [ ] `/` `/timeline` `/projects` `/moments` `/friends` `/about` 全部 200
+- [ ] `/posts/<真实slug>` 200；`/posts/no-such-post` **404**（防软 404 回归）
+- [ ] `/api/posts` `/api/tags` `/api/categories` `/api/graph` `/api/moments` 全部 200；`/api/chatter` **404**
+- [ ] `/api/ask` 返回 `citations`，每条带 `postSlug` / `postTitle` / `heading`
+- [ ] `/sitemap.xml` 含 `friends`、不含 `chatter`
+- [ ] **重跑一次 `python -m scripts.init_db`，`citations.post_slug` 非空条数不变**（引用不再随导入断链）
+- [ ] 浏览器实测：导航六项、桌宠在、点桌宠能唤出助手面板、控制台 0 错误
 - [ ] 推送后用 `git ls-remote origin refs/heads/main` 比对本地 HEAD（不信退出码）
-
----
-
-## 6. 建议的下一个动作
-
-**P2 实时日志面板**——数据已经在 `agent_turns` 里躺了 76 轮，`readLog()` 也写好了，
-只差一个面板；做完你能直接看见「大家到底在问什么」，这恰好是 P3 Wiki 沉淀的选题来源。
-P0 填 Key 是顺手的事，但需要你自己去申请。

@@ -1,4 +1,4 @@
-"""内容查询服务：逐函数移植 src/lib/posts.ts、chatter.ts、moments.ts。
+"""内容查询服务：逐函数移植 src/lib/posts.ts、moments.ts。
 
 SQL 与原版保持一致（同样的过滤、同样的排序、同样的 LIKE 语义），
 差别只在 node:sqlite 的命名参数 @x 换成 SQLAlchemy 的 :x。
@@ -14,11 +14,9 @@ from sqlalchemy import Integer, String, and_, case, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from ..models import Chatter, Chunk, Link, Moment as MomentRow, Post, PostTag, Tag
+from ..models import Chunk, Link, Moment as MomentRow, Post, PostTag, Tag
 from ..schemas import (
     CategoryRow,
-    ChatterDetail,
-    ChatterItem,
     LinkRef,
     Moment,
     PostDetail,
@@ -259,69 +257,6 @@ async def outgoing_links(session: AsyncSession, slug: str) -> list[LinkRef]:
         .order_by(Post.title)
     )
     return [LinkRef(slug=r.slug, title=r.title) for r in (await session.execute(stmt)).all()]
-
-
-# ── 杂谈 ──────────────────────────────────────────────
-
-
-async def list_chatter(
-    session: AsyncSession, q: str = "", tag: str = "", mood: str = ""
-) -> list[ChatterItem]:
-    q = (q or "").strip()
-    tag = (tag or "").strip()
-    mood = (mood or "").strip()
-    stmt = select(Chatter)
-    if q:
-        stmt = stmt.where(
-            or_(
-                Chatter.title.like(f"%{q}%"),
-                Chatter.excerpt.like(f"%{q}%"),
-                Chatter.content.like(f"%{q}%"),
-            )
-        )
-    if mood:
-        stmt = stmt.where(Chatter.mood == mood)
-    if tag:
-        stmt = stmt.where(Chatter.tags.like(f'%"{tag}"%'))
-    stmt = stmt.order_by(
-        func.coalesce(Chatter.published_at, Chatter.created_at).desc(), Chatter.id.desc()
-    )
-    rows = (await session.execute(stmt)).scalars().all()
-    return [_chatter_item(r) for r in rows]
-
-
-def _chatter_item(row: Chatter) -> ChatterDetail:
-    return ChatterDetail(
-        id=row.id,
-        slug=row.slug,
-        title=row.title,
-        excerpt=row.excerpt,
-        content=row.content,
-        mood=row.mood,
-        tags=_json_str_list(row.tags),
-        cover=row.cover,
-        published_at=row.published_at,
-        word_count=len(re.sub(r"\s", "", row.content)),
-    )
-
-
-async def get_chatter(session: AsyncSession, slug: str) -> ChatterDetail | None:
-    row = (
-        await session.execute(select(Chatter).where(Chatter.slug == slug))
-    ).scalar_one_or_none()
-    return _chatter_item(row) if row else None
-
-
-async def chatter_tags(session: AsyncSession) -> list[dict[str, Any]]:
-    rows = (await session.execute(select(Chatter.tags))).scalars().all()
-    counter: dict[str, int] = {}
-    for raw in rows:
-        for name in _json_str_list(raw):
-            counter[name] = counter.get(name, 0) + 1
-    return sorted(
-        ({"name": k, "count": v} for k, v in counter.items()),
-        key=lambda x: (-x["count"], x["name"]),
-    )
 
 
 # ── 说说 ──────────────────────────────────────────────

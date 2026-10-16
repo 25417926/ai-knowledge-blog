@@ -13,7 +13,7 @@
 cd server && python -m venv .venv
 .venv/Scripts/activate        # Windows；macOS/Linux 用 source .venv/bin/activate
 pip install -r requirements.txt
-python -m scripts.init_db     # 建表 + 角色/杂谈/说说种子 + 导入示例 Vault
+python -m scripts.init_db     # 建表 + 角色/说说种子 + 导入示例 Vault
 python -m uvicorn app.main:app --reload --port 8000
 
 # 2. 前端（另一个终端）
@@ -21,8 +21,8 @@ npm install
 npm run dev                   # http://localhost:3000
 ```
 
-首页是卡片墙：资料卡 + 最新文章/杂谈轮播 + 状态/主题/说说卡。
-顶部导航在「归档 / 项目 / 说说 / 杂谈 / 关于」之间切换，`/blog` 旧地址仍会 308 跳新地址。
+首页是卡片墙：资料卡 + 最新文章轮播 + 状态/主题/说说卡。
+顶部导航在「归档 / 项目 / 说说 / 友链 / 关于」之间切换，`/blog` 旧地址仍会 308 跳新地址。
 
 零外部服务依赖：不需要 Docker、不需要装数据库服务器、不需要任何 API Key。
 两个进程各自可热重载；前端未启动时后端仍可独立调试（`http://127.0.0.1:8000/docs` 有完整 API 文档）。
@@ -64,7 +64,7 @@ python -m scripts.clip --list           # 查看已收藏
 | `/posts/[slug]` | 文章详情：封顶封面、目录、代码高亮、灯箱、上下篇、出链/反链 |
 | `/projects` | 项目矩阵：搜索 + 技术栈胶囊 + 外链 |
 | `/moments` | 说说流：宫格自适应、排序切换、搜索 |
-| `/chatter` `/chatter/[slug]` | 杂谈：情绪枚举 + 标签 + 搜索；详情页 |
+| `/friends` | 友链：卡片墙，数据是 `src/lib/friends.ts` 里的 TS 常量（不入库） |
 | `/about` | 关于：自我介绍、时间线、技能栈、兴趣、联系方式 |
 | `/admin` `/admin/posts` `/admin/logs` | 后台：口令登录、文章增删改、对话日志（未配 `ADMIN_PASSWORD` 则整块禁用） |
 | `/robots.txt` `/sitemap.xml` `/rss.xml` | 由 `app/robots.ts`、`app/sitemap.ts`、`app/rss.xml/route.ts` 生成 |
@@ -78,12 +78,12 @@ Next 只能退回 `meta refresh`，拿不到真正的 308。
 ```
 src/                       前端（Next.js App Router）
   app/
-    page.tsx         首页：卡片网格 + 两组轮播
+    page.tsx         首页：卡片网格 + 最新文章轮播
     timeline/        归档（筛选条件走 URL，便于分享与后退）
     posts/[slug]/    文章详情
-    chatter/         杂谈列表 + 详情
     moments/         说说流
     projects/        项目矩阵
+    friends/         友链
     about/           关于
     admin/           后台：layout 是认证闸门 + 侧栏，posts 列表/编辑器，logs 日志面板
     robots.ts sitemap.ts rss.xml/route.ts
@@ -92,18 +92,19 @@ src/                       前端（Next.js App Router）
     api.ts           唯一的数据出口：typed fetch 客户端，字段与后端 camelCase 契约对齐
     admin.ts         后台的 fetch 客户端（改走同源 /api 代理，见「后台」一节）
     markdown.ts      Markdown → HTML（remark/rehype + Shiki 代码高亮）+ 目录抽取
-    moods.ts         情绪枚举与配色（无依赖，客户端可引用）
+    friends.ts       友链清单（编译期常量，不入库）
     projects.ts      项目清单（编译期常量，不入库）
-    cover.ts         分类配色：卡片封面 / 图谱节点共用
+    cover.ts         分类配色：卡片封面 / 图谱节点 / 友链首字母块共用
     site.ts          站点文案与个人信息的唯一出处
   components/
-    BlogAssistant.tsx   全站浮动的博客助手（带出处卡片，直连后端 /api/ask）
-    Pet.tsx             鲸鱼娘桌宠（可拖动、喂鱼干、没人理会打盹；不接问答）
-    Carousel.tsx        卡片轮播（首页两组复用）
+    BlogAssistant.tsx   博客助手面板（带出处卡片、思考链；由桌宠派发事件唤出）
+    MingyuePet.tsx      鲸鱼娘桌宠「溟月」：PixiJS 帧动画 + 状态机，同时是助手唯一入口
+    Pet.tsx             上一版桌宠（6 张 webp 换 src）。已被 MingyuePet 取代，留着便于一行回退
+    Carousel.tsx        卡片轮播（首页复用）
     Toc.tsx             正文目录（滚动高亮）
     CodeCopy.tsx        代码块的语言标签 / 复制 / 行号
     Lightbox.tsx        图片灯箱（事件委托，文章与说说复用）
-    TimelineControls.tsx / ChatterControls.tsx / ProjectsBoard.tsx / MomentsBoard.tsx
+    TimelineControls.tsx / ProjectsBoard.tsx / MomentsBoard.tsx
     SiteHeader.tsx / SiteFooter.tsx / Splash.tsx / Danmaku.tsx / PageHeader.tsx
     HomeCards.tsx       首页状态卡与主题卡
 server/                   后端（FastAPI + SQLAlchemy）
@@ -111,10 +112,10 @@ server/                   后端（FastAPI + SQLAlchemy）
     main.py           FastAPI 入口：CORS、lifespan 建表、路由注册
     database.py       引擎与会话：sqlite+aiosqlite，WAL + 外键在 connect 级挂 PRAGMA
     schema.sql        全部 DDL（与数据同源，建表只认这一份）
-    models.py         ORM 模型：14 张表，字段与前端类型逐字对齐
+    models.py         ORM 模型：16 张表，字段与前端类型逐字对齐
     schemas.py        Pydantic 响应模型：snake_case → camelCase 别名生成
     services/
-      content.py      文章 / 杂谈 / 说说 / 图谱查询（Node 版 lib 的逐函数移植）
+      content.py      文章 / 说说 / 图谱查询（Node 版 lib 的逐函数移植）
       agent_chat.py   Agent 内核 + RAG 检索 + LLM 适配 + Mock 三分支
     api/routes/
       content.py      内容查询接口
@@ -126,7 +127,6 @@ server/                   后端（FastAPI + SQLAlchemy）
   requirements.txt
 content/
   sample-vault/      示例 Vault，用来跑通全流程（clippings/ 是收藏管道的自动入库目录）
-  chatter/           杂谈原文（Markdown）
   moments.json       说说种子数据
   town/agents.json   角色设定（人格、口吻），博客助手也在这里
 ```
@@ -159,11 +159,20 @@ content/
 四个行为细节被刻意保留：好感度只增不减（单轮 +1~4）、短期记忆直接读最近 8 轮
 `agent_turns`、Mock 三分支且明说「这是节选不是转述」。
 
-**两个前景组件分工：宠物只陪伴，知行只问答。** 左下角的桌宠「鱼干」不接问答，
-它只有拖拽、喂鱼干、打盹、自言自语四种互动，面板里没有输入框。这不只是为了不重复：
-两者曾经都在调 `/api/ask` 里的同一个 agent（`assistant`）和同一个会话（`blog`），
-于是从宠物框问的话会算进知行的上下文、记忆与好感度里，两边并发提问还会互相顶掉轮次。
-站内问答因此有且只有一个入口——右下角的「知行」（带出处卡片、工具链与「只搜本文」开关）。
+**问答入口只有一个：桌宠「溟月」。** 左下角那只鲸鱼娘点一下就唤出助手面板（走一个
+`blog-assistant:open` 自定义事件，`BlogAssistant` 监听后展开），助手自己不再挂右下角的浮动按钮。
+这不只是为了不重复：两者曾经各自调 `/api/ask` 里的同一个 agent 和同一个会话（`blog`），
+于是从宠物那边问的话会算进知行的上下文、记忆与好感度里，两边并发提问还会互相顶掉轮次。
+入口并成一个之后，这种分叉在物理上就不可能发生了 —— 但**桌宠本身仍然不碰问答**，
+它只负责派发一个事件，agent 与会话从头到尾只有一套。
+
+**桌宠是帧动画状态机，不是切表情。** 渲染走 PixiJS（`pixi.js` 只在 `useEffect` 里动态
+import，首屏包不含它），状态表 `CLIPS` 定义每个动作的帧序列与节奏：
+待机随机眨眼、悬停换姿态、单击换表情并说一句邀请（顺手叫出助手）、双击摸头听它说句闲话、
+按住拖走播小碎步、松手重力落地弹跳回待机，挂机冷却满了会自动演一遍煮饭剧情
+（蹲锅边 → 捧钵吃 → 定格满足）。指针事件挂在容器上、位置由 React 管 ——
+没有采用「全屏透明 canvas 接管鼠标」那套，那会把整页的点击与文字选择一起吞掉。
+素材与导出规格见「桌宠素材」一节。
 
 **意图识别归模型，不归正则。** 配置了 LLM 时，助手跑 Function Calling 循环
 （`agent_chat.py` 的 `_run_tool_agent`）：模型自己决定调 `search_posts` /
@@ -214,7 +223,7 @@ Mock 与闲聊路径没有工具调用，就什么都不画，不表演一段假
 规则必须一致，否则 `[[标题]]` 会在前端解析出不同的 key，指向已存在文章也显示「待创建」。
 
 **故意没有 `app/loading.tsx`。** 根级 `loading.tsx` 会给整棵树套一层 Suspense，
-于是 `/posts/[slug]`、`/chatter/[slug]` 这类动态详情页会在 `notFound()` 判定之前
+于是 `/posts/[slug]` 这类动态详情页会在 `notFound()` 判定之前
 就把 `200` 冲出去——不存在的 slug 会渲染出「文章不存在」的页面，但 HTTP 状态码仍是 200，
 也就是**软 404**，搜索引擎会把它当正常页面收录。这两个详情页都是 `force-dynamic`，
 必须让 404 在首字节之前定下来，所以根级加载骨架被移除。
@@ -224,13 +233,32 @@ Mock 与闲聊路径没有工具调用，就什么都不画，不表演一段假
 
 **服务端与客户端的边界是硬约束，不是风格问题。** Node 时代这条约束来自
 `node:sqlite` 的 null 原型对象；拆分之后它变成了「前端组件不允许 import 任何会发 HTTP 的
-业务模块」——所有取数走 `src/lib/api.ts`，纯常量（`moods.ts` / `projects.ts` / `site.ts`）
+业务模块」——所有取数走 `src/lib/api.ts`，纯常量（`friends.ts` / `projects.ts` / `site.ts`）
 另存无依赖模块，客户端组件才能安全引用。
 
 **代码高亮走 Shiki 双主题。** `@shikijs/rehype` 只往每个 token 写 `--shiki-light` /
 `--shiki-dark` 两个 CSS 变量（`defaultColor: false`），显示哪套由 `.dark` 选择器决定——
 切主题不需要重渲染，也不会闪。语言标签、复制按钮、行号由 `CodeCopy.tsx` 在客户端补，
 用 CSS 计数器做行号，不改动 Shiki 的输出结构。
+
+## 桌宠素材
+
+原始素材是 22 张 1024×1024 的透明 PNG（8 个动作组：`idle` 1 / `blink` 2 / `click` 3 /
+`hover` 3 / `lifted` 1 / `walk` 2 / `cook_rice` 8 / `pet_head` 2，合计 20.7MB），
+放在 `public/pets/mingyue/<动作组>/` 的是导出后的 WebP，共 0.86MB。导出规则：
+
+1. 按 `alpha > 8` 求内容 bbox，裁掉四周空白，再各留 4px 内边距
+2. 等比缩放到高度 384（跨帧、跨动作组角色大小一致）
+3. **同组按该组最宽帧左右对称补透明**，组内所有帧尺寸完全相同
+4. 存 WebP（`quality=88`，带 alpha）
+
+第 2、3 步是为了运行时不抖：容器按「底边中点」定位，高度不统一角色会忽大忽小，
+宽度不统一容器每帧改尺寸、画面会左右晃。裁切还有个必要副作用——裁完之后
+「图片底边中点」就是「内容底边中点」，精灵按这里对齐地面，站立帧的脚就落在同一条线上。
+
+已知两处素材本身的瑕疵（未修，改素材要重跑生图）：
+- `hover` 三帧之间内容水平中心差 12% 帧宽，循环播放会轻微左右晃
+- `pet_head` 里那只手是从画面左边缘切进来的，手臂有一截平口
 
 ## 当前进度
 
@@ -255,6 +283,11 @@ Mock 与闲聊路径没有工具调用，就什么都不画，不表演一段假
       「检索 N 次 · 引用 M 篇」可展开），历史消息从 tool_trace 回放同一步骤条
 - [x] 阶段 5a：后台写作与登录 · 对话日志面板 —— `/admin` 口令登录、文章增删改
       （保存即写回 Vault 并重建索引、草稿不进前台与检索）、对话日志时间线
+- [x] 阶段 5c：桌宠重做 —— 换成 PixiJS 帧动画状态机（待机呼吸/眨眼、悬停、点击表情+气泡、
+      双击摸头、拖走小碎步、松手重力落地弹跳、挂机煮饭剧情），素材 20.7MB → 0.86MB WebP
+- [x] 阶段 7：砍杂谈 · 加友链 · 助手入口并到桌宠 —— 杂谈前后端连同 6 篇原文一起下线；
+      新增 `/friends`（数据是 `src/lib/friends.ts` 常量）；助手撤掉右下角浮动按钮，
+      改由桌宠单击派发 `blog-assistant:open` 唤出，agent 与会话依旧唯一
 - [ ] 阶段 5b：Wiki 自动沉淀与出处回链（`wiki_entries` / `wiki_sources` 两张表已建但零引用）
 
 ## 待办（TODO）
@@ -277,7 +310,10 @@ Mock 与闲聊路径没有工具调用，就什么都不画，不表演一段假
 
 ### 小项
 
-- [ ] 桌宠名「鱼干」（鲸鱼也说得通）。要换只改 `src/lib/site.ts` 一处
+- [ ] **桌宠素材二次对齐** —— `hover` 三帧水平中心差 12% 帧宽（44.9% → 56.9%），
+      循环播放会轻微左右晃；`pet_head` 的手臂被左边缘切出平口。
+      两者都要重跑生图或做像素级重排，不是代码能补的
+- [ ] 桌宠改名只需改 `src/lib/site.ts` 一处（`pet.name`，气泡与 aria-label 都跟着走）
 
 ## 路线图（按依赖顺序）
 

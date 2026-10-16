@@ -189,7 +189,9 @@ class Citation(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     turn_id: Mapped[int] = mapped_column(ForeignKey("agent_turns.id", ondelete="CASCADE"))
-    chunk_id: Mapped[int | None] = mapped_column(ForeignKey("chunks.id", ondelete="SET NULL"))
+    # 锚是文章 slug + 小节路径，不是 chunks.id：chunks 每次导入都重建，主键会漂
+    post_slug: Mapped[str] = mapped_column(String, default="")
+    heading_path: Mapped[str] = mapped_column(Text, default="")
     quote: Mapped[str] = mapped_column(Text, default="")
     score: Mapped[float] = mapped_column(Float, default=0)
 
@@ -210,24 +212,6 @@ class Clipping(Base):
     index_text: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default="datetime('now')")
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default="datetime('now')")
-
-
-# ── 杂谈层 ──────────────────────────────────────────────
-
-
-class Chatter(Base):
-    __tablename__ = "chatter"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    slug: Mapped[str] = mapped_column(String, unique=True, nullable=False)
-    title: Mapped[str] = mapped_column(String, nullable=False)
-    excerpt: Mapped[str] = mapped_column(Text, default="")
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    mood: Mapped[str] = mapped_column(String, default="calm")
-    tags: Mapped[str] = mapped_column(Text, default="[]")
-    cover: Mapped[str] = mapped_column(String, default="")
-    published_at: Mapped[str | None] = mapped_column(String)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default="datetime('now')")
 
 
 # ── 说说层 ──────────────────────────────────────────────

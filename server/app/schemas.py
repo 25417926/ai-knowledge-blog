@@ -70,36 +70,7 @@ class GraphData(ORMModel):
     edges: list[dict]
 
 
-# ── 杂谈 / 说说 ──────────────────────────────────────────
-
-
-class ChatterItem(ORMModel):
-    id: int
-    slug: str
-    title: str
-    excerpt: str
-    mood: str
-    tags: list[str]
-    cover: str
-    published_at: str | None
-    word_count: int
-
-    @field_validator("tags", mode="before")
-    @classmethod
-    def _parse_tags(cls, v: object) -> object:
-        if isinstance(v, str):
-            import json
-
-            try:
-                parsed = json.loads(v)
-                return parsed if isinstance(parsed, list) else []
-            except Exception:
-                return []
-        return v
-
-
-class ChatterDetail(ChatterItem):
-    content: str
+# ── 说说 ────────────────────────────────────────────────
 
 
 class Moment(ORMModel):
@@ -147,7 +118,6 @@ class AffinityView(ORMModel):
 
 
 class Citation(ORMModel):
-    chunk_id: int
     post_slug: str
     post_title: str
     category: str

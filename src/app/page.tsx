@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { Carousel, type CarouselItem } from '@/components/Carousel';
 import { StatusCard, ThemeCard } from '@/components/HomeCards';
 import { coverVars } from '@/lib/cover';
-import { listChatter, listMoments, listPosts } from '@/lib/api';
+import { listMoments, listPosts } from '@/lib/api';
 import { site } from '@/lib/site';
 
 export const dynamic = 'force-dynamic';
@@ -10,11 +10,7 @@ export const dynamic = 'force-dynamic';
 const CAROUSEL_SIZE = 5;
 
 export default async function HomePage() {
-  const [posts, chatter, moments] = await Promise.all([
-    listPosts(),
-    listChatter(),
-    listMoments(),
-  ]);
+  const [posts, moments] = await Promise.all([listPosts(), listMoments()]);
 
   // 轮播里的日期取到「日」即可——首页不需要精确到秒，那是归档页的事
   const postItems: CarouselItem[] = posts.slice(0, CAROUSEL_SIZE).map((post) => ({
@@ -27,23 +23,12 @@ export default async function HomePage() {
     cover: coverVars(post.category),
   }));
 
-  const chatterItems: CarouselItem[] = chatter.slice(0, CAROUSEL_SIZE).map((item) => ({
-    key: item.slug,
-    href: `/chatter/${encodeURIComponent(item.slug)}`,
-    kicker: 'RECORDS',
-    date: item.publishedAt ?? '未标注日期',
-    title: item.title,
-    summary: item.excerpt,
-    cover: coverVars(item.mood),
-  }));
-
   const photos = moments
     .flatMap((moment) => moment.images)
     .slice(0, 6);
 
   const stats = [
     { label: site.author.statsLabels.posts, value: posts.length },
-    { label: site.author.statsLabels.chatter, value: chatter.length },
     { label: site.author.statsLabels.moments, value: moments.length },
   ];
 
@@ -80,7 +65,7 @@ export default async function HomePage() {
 
             <p className="mt-5 text-[13px] leading-6 text-ink-dim">{site.author.bio}</p>
 
-            <dl className="mt-6 grid grid-cols-3 gap-3 border-t border-ink-line pt-5">
+            <dl className="mt-6 grid grid-cols-2 gap-3 border-t border-ink-line pt-5">
               {stats.map((item) => (
                 <div key={item.label}>
                   <dd className="font-mono text-[22px] font-semibold leading-none text-ink-text">
@@ -117,52 +102,41 @@ export default async function HomePage() {
         </section>
       </div>
 
-      {/* ── 第二排：杂谈轮播 + 状态/主题/说说 ───────────────── */}
-      <div className="mt-10 grid grid-cols-1 gap-5 lg:grid-cols-12">
-        <section className="flex flex-col lg:col-span-8" aria-label="最新杂谈">
-          <SectionHead title="杂谈" href="/chatter" linkText="全部杂谈" />
-          {chatterItems.length > 0 ? (
-            <Carousel items={chatterItems} label="最新杂谈轮播" fill />
-          ) : (
-            <EmptyHint text="还没有杂谈。" />
-          )}
-        </section>
+      {/* ── 第二排：状态 / 主题 / 说说 ─────────────────────── */}
+      <div className="mt-10 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+        <StatusCard />
+        <ThemeCard />
 
-        <div className="flex flex-col gap-5 lg:col-span-4">
-          <StatusCard />
-          <ThemeCard />
+        <section className="card flex flex-col p-6" aria-label="说说精选">
+          <div className="flex items-baseline justify-between gap-3">
+            <p className="font-mono text-[10.5px] tracking-[0.3em] text-ink-dim">MOMENTS</p>
+            <Link href="/moments" className="text-[11.5px] text-ink-dim transition-colors hover:text-accent-ink">
+              全部说说 →
+            </Link>
+          </div>
 
-          <section className="card flex flex-1 flex-col p-6" aria-label="说说精选">
-            <div className="flex items-baseline justify-between gap-3">
-              <p className="font-mono text-[10.5px] tracking-[0.3em] text-ink-dim">MOMENTS</p>
-              <Link href="/moments" className="text-[11.5px] text-ink-dim transition-colors hover:text-accent-ink">
-                全部说说 →
-              </Link>
+          {photos.length > 0 ? (
+            <div className="mt-4 grid grid-cols-3 gap-1.5">
+              {photos.map((src) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  key={src}
+                  src={src}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  className="aspect-square w-full rounded-lg border border-ink-line object-cover"
+                />
+              ))}
             </div>
+          ) : (
+            <p className="mt-4 text-[12.5px] text-ink-dim">还没有带图的说说。</p>
+          )}
 
-            {photos.length > 0 ? (
-              <div className="mt-4 grid grid-cols-3 gap-1.5">
-                {photos.map((src) => (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    key={src}
-                    src={src}
-                    alt=""
-                    loading="lazy"
-                    decoding="async"
-                    className="aspect-square w-full rounded-lg border border-ink-line object-cover"
-                  />
-                ))}
-              </div>
-            ) : (
-              <p className="mt-4 text-[12.5px] text-ink-dim">还没有带图的说说。</p>
-            )}
-
-            <p className="mt-auto pt-4 text-[12px] text-ink-dim">
-              共 <span className="font-mono text-ink-text">{moments.length}</span> 条动态
-            </p>
-          </section>
-        </div>
+          <p className="mt-auto pt-4 text-[12px] text-ink-dim">
+            共 <span className="font-mono text-ink-text">{moments.length}</span> 条动态
+          </p>
+        </section>
       </div>
     </main>
   );

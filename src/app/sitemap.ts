@@ -1,5 +1,5 @@
 import type { MetadataRoute } from 'next';
-import { listChatter, listPosts } from '@/lib/api';
+import { listPosts } from '@/lib/api';
 import { site } from '@/lib/site';
 
 export const dynamic = 'force-dynamic';
@@ -15,8 +15,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const pages: MetadataRoute.Sitemap = [
     { url: `${base}/`, changeFrequency: 'daily', priority: 1 },
     { url: `${base}/timeline`, changeFrequency: 'daily', priority: 0.9 },
-    { url: `${base}/chatter`, changeFrequency: 'weekly', priority: 0.7 },
     { url: `${base}/moments`, changeFrequency: 'weekly', priority: 0.6 },
+    { url: `${base}/friends`, changeFrequency: 'monthly', priority: 0.6 },
     { url: `${base}/projects`, changeFrequency: 'monthly', priority: 0.6 },
     { url: `${base}/about`, changeFrequency: 'monthly', priority: 0.5 },
   ];
@@ -28,13 +28,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority: 0.8,
   }));
 
-  const chatter: MetadataRoute.Sitemap = (await listChatter()).map((item) => ({
-    url: `${base}/chatter/${encodeURIComponent(item.slug)}`,
-    lastModified: day(item.publishedAt),
-    changeFrequency: 'monthly',
-    priority: 0.6,
-  }));
-
   // 说说没有独立详情页，只在列表页聚合，所以不进 sitemap
-  return [...pages, ...posts, ...chatter];
+  return [...pages, ...posts];
 }

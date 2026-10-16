@@ -1,4 +1,4 @@
-"""初始化数据库：建表 + 角色/杂谈/说说种子 + Vault 导入。
+"""初始化数据库：建表 + 角色/说说种子 + Vault 导入。
 
 对应 Node 版 scripts/db-init.ts 与 scripts/vault-import.ts，一条命令做完两件事：
 
@@ -24,7 +24,6 @@ import frontmatter  # noqa: E402
 from app.database import DB_PATH, init_schema, AsyncSessionLocal  # noqa: E402
 from app.models import (  # noqa: E402
     Agent,
-    Chatter,
     Clipping,
     Link,
     Moment,
@@ -39,7 +38,6 @@ from sqlalchemy.dialects.sqlite import insert  # noqa: E402
 WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]")
 CHUNK_SOFT_LIMIT = 800
 CLIP_INDEX_SECTION = "原文存档"  # 收藏稿原文 chunk 的段落前缀，与笔记里的总结区分开
-MOODS = {"calm", "happy", "thinking", "tired", "emo"}
 
 
 def to_slug(value: str) -> str:
@@ -194,52 +192,6 @@ async def seed_agents(session) -> int:
         await session.execute(stmt)
     await session.commit()
     return len(agents)
-
-
-async def seed_chatter(session) -> int:
-    directory = PROJECT_ROOT / "content" / "chatter"
-    if not directory.exists():
-        print("  · 未找到 content/chatter，跳过杂谈初始化")
-        return 0
-    files = sorted(p for p in directory.iterdir() if p.suffix.lower() == ".md")
-    for path in files:
-        post = frontmatter.loads(path.read_text(encoding="utf-8"))
-        data, content = post.metadata, post.content
-        slug = data.get("slug") or path.stem
-        title = data.get("title") or path.stem
-        mood = data.get("mood") or "calm"
-        if mood not in MOODS:
-            mood = "calm"
-        tags = json.dumps(as_string_list(data.get("tags")), ensure_ascii=False)
-        excerpt = data.get("excerpt") or re.sub(r"[#>*`\-\n]", " ", content).strip()[:80]
-        stmt = (
-            insert(Chatter)
-            .values(
-                slug=slug,
-                title=title,
-                excerpt=excerpt,
-                content=content,
-                mood=mood,
-                tags=tags,
-                cover=data.get("cover", ""),
-                published_at=to_date(data.get("date")),
-            )
-            .on_conflict_do_update(
-                index_elements=[Chatter.slug],
-                set_={
-                    "title": title,
-                    "excerpt": excerpt,
-                    "content": content,
-                    "mood": mood,
-                    "tags": tags,
-                    "cover": data.get("cover", ""),
-                    "published_at": to_date(data.get("date")),
-                },
-            )
-        )
-        await session.execute(stmt)
-    await session.commit()
-    return len(files)
 
 
 async def seed_moments(session) -> int:
@@ -406,7 +358,6 @@ async def main() -> None:
 
     async with AsyncSessionLocal() as session:
         print(f"  ✓ 角色初始化完成，共 {await seed_agents(session)} 个 agent")
-        print(f"  ✓ 杂谈初始化完成，共 {await seed_chatter(session)} 篇")
         print(f"  ✓ 说说初始化完成，新增 {await seed_moments(session)} 条")
 
         vault_dir = PROJECT_ROOT / "content" / "sample-vault"

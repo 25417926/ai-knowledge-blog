@@ -11,7 +11,7 @@ const NAV = [
   { href: '/timeline', label: '归档' },
   { href: '/projects', label: '项目' },
   { href: '/moments', label: '说说' },
-  { href: '/chatter', label: '杂谈' },
+  { href: '/friends', label: '友链' },
   { href: '/about', label: '关于' },
 ];
 

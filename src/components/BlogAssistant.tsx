@@ -157,6 +157,12 @@ async function readSSE(
  *
  * 挂在 layout 上，全站可用；在文章页会自动多一个「只搜本文」的开关。
  */
+/**
+ * 桌宠点一下时派发这个事件来开面板。
+ * 助手没有自己的浮动按钮了——入口只剩桌宠一个，agent 与会话因此天然唯一。
+ */
+export const OPEN_ASSISTANT_EVENT = 'blog-assistant:open';
+
 export function BlogAssistant() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -212,6 +218,12 @@ export function BlogAssistant() {
         /* 第一次打开没有历史是正常的 */
       });
   }, [open]);
+
+  useEffect(() => {
+    const openPanel = () => setOpen(true);
+    window.addEventListener(OPEN_ASSISTANT_EVENT, openPanel);
+    return () => window.removeEventListener(OPEN_ASSISTANT_EVENT, openPanel);
+  }, []);
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
@@ -372,19 +384,6 @@ export function BlogAssistant() {
 
   return (
     <>
-      {!open && (
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className="glass fixed bottom-6 right-6 z-40 flex items-center gap-2.5 rounded-full border border-ink-line px-4 py-3 text-[13px] font-medium text-ink-text shadow-lg transition-colors hover:border-accent/60"
-        >
-          <span className="grid h-5 w-5 place-items-center rounded-full bg-accent text-[11px] text-white">
-            知
-          </span>
-          问 AI 助手
-        </button>
-      )}
-
       {open && (
         <section
           aria-label="博客助手"

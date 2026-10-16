@@ -7,7 +7,7 @@ export const metadata: Metadata = {
 };
 
 const WAYS = [
-  { href: '/', label: '回首页', hint: '资料卡、最新文章与杂谈' },
+  { href: '/', label: '回首页', hint: '资料卡、最新文章与说说' },
   { href: '/timeline', label: '看归档', hint: '按时间与标签检索全部内容' },
 ];
 

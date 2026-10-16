@@ -18,7 +18,7 @@ export default async function MomentsPage() {
       <PageHeader
         kicker="MOMENTS"
         title="说说"
-        description="短、随手、不讲究结构。想认真写的都放杂谈里了。"
+        description="短、随手、不讲究结构。一句一段，想到就写。"
       />
       {moments.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-ink-line p-14 text-center text-[13px] text-ink-dim">

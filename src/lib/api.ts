@@ -15,8 +15,6 @@ const RAW_BASE =
 
 export const API_BASE = RAW_BASE.replace(/\/+$/, '');
 
-import { isMood, type Mood } from './moods';
-
 export type PostListItem = {
   id: number;
   slug: string;
@@ -43,20 +41,6 @@ export type GraphData = {
   edges: { source: string; target: string }[];
 };
 
-export type ChatterItem = {
-  id: number;
-  slug: string;
-  title: string;
-  excerpt: string;
-  mood: Mood;
-  tags: string[];
-  cover: string;
-  publishedAt: string | null;
-  wordCount: number;
-};
-
-export type ChatterDetail = ChatterItem & { content: string };
-
 export type Moment = {
   id: number;
   content: string;
@@ -76,11 +60,6 @@ export class ApiError extends Error {
     super(`接口 ${path} 返回 ${status}：${detail}`);
     this.name = 'ApiError';
   }
-}
-
-/** 情绪是后端自由文本，前端只认枚举里的五个；不认识的一律按 calm，不让页面炸 */
-export function asMood(value: string): Mood {
-  return isMood(value) ? value : 'calm';
 }
 
 async function get<T>(path: string, revalidate = 0): Promise<T> {
@@ -139,27 +118,6 @@ export async function getBacklinks(slug: string) {
 
 export async function getOutgoingLinks(slug: string) {
   return get<LinkRef[]>(`/api/posts/${encodeURIComponent(slug)}/outgoing`);
-}
-
-// ── 杂谈 ──────────────────────────────────────────────
-
-export async function listChatter(opts: { q?: string; tag?: string; mood?: string } = {}) {
-  const params = new URLSearchParams();
-  if (opts.q) params.set('q', opts.q);
-  if (opts.tag) params.set('tag', opts.tag);
-  if (opts.mood) params.set('mood', opts.mood);
-  const query = params.toString();
-  const items = await get<ChatterItem[]>(`/api/chatter${query ? `?${query}` : ''}`);
-  return items.map((item) => ({ ...item, mood: asMood(item.mood) }));
-}
-
-export async function getChatter(slug: string) {
-  const item = await get<ChatterDetail | null>(`/api/chatter/${encodeURIComponent(slug)}`);
-  return item ? { ...item, mood: asMood(item.mood) } : null;
-}
-
-export async function listChatterTags() {
-  return get<{ name: string; count: number }[]>('/api/chatter-tags');
 }
 
 // ── 说说 ──────────────────────────────────────────────

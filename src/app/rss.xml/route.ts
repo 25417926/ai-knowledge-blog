@@ -1,4 +1,4 @@
-import { listChatter, listPosts } from '@/lib/api';
+import { listPosts } from '@/lib/api';
 import { site } from '@/lib/site';
 
 export const dynamic = 'force-dynamic';
@@ -21,23 +21,15 @@ type FeedItem = { title: string; link: string; date: string | null; summary: str
  * RSS 2.0。
  *
  * 手拼字符串就够了——只有一二十条，引一个 feed 库反而多一层依赖。
- * 文章与杂谈混在同一个源里，按时间合并；两类内容对订阅者来说是同一件事：站上又写了点东西。
  */
 export async function GET() {
-  const items: FeedItem[] = [
-    ...(await listPosts()).map((post) => ({
+  const items: FeedItem[] = (await listPosts())
+    .map((post) => ({
       title: post.title,
       link: `${site.url}/posts/${encodeURIComponent(post.slug)}`,
       date: post.publishedAt,
       summary: post.summary,
-    })),
-    ...(await listChatter()).map((item) => ({
-      title: item.title,
-      link: `${site.url}/chatter/${encodeURIComponent(item.slug)}`,
-      date: item.publishedAt,
-      summary: item.excerpt,
-    })),
-  ]
+    }))
     .sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''))
     .slice(0, 30);
 

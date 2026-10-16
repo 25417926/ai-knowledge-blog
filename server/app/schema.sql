@@ -146,16 +146,20 @@ CREATE INDEX IF NOT EXISTS idx_turns_session ON agent_turns(session_id, id);
 CREATE INDEX IF NOT EXISTS idx_turns_agent ON agent_turns(agent_id, created_at DESC);
 
 -- 单条结论到原文段落的可追溯引用
+-- 锚用业务键（post_slug + heading_path）而非 chunks.id：chunks 是检索用的派生数据，
+-- import_vault 每次导入都整体重建，自增主键会漂，锚在它上面的引用会成批断掉。
+-- quote 逐字留档原文片段，使引用自包含——文章被改写也仍能显示「哪篇、哪节、原话」。
 CREATE TABLE IF NOT EXISTS citations (
-  id       INTEGER PRIMARY KEY AUTOINCREMENT,
-  turn_id  INTEGER NOT NULL REFERENCES agent_turns(id) ON DELETE CASCADE,
-  chunk_id INTEGER REFERENCES chunks(id) ON DELETE SET NULL,
-  quote    TEXT    NOT NULL DEFAULT '',
-  score    REAL    NOT NULL DEFAULT 0
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  turn_id      INTEGER NOT NULL REFERENCES agent_turns(id) ON DELETE CASCADE,
+  post_slug    TEXT    NOT NULL DEFAULT '',
+  heading_path TEXT    NOT NULL DEFAULT '',
+  quote        TEXT    NOT NULL DEFAULT '',
+  score        REAL    NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_citations_turn ON citations(turn_id);
-CREATE INDEX IF NOT EXISTS idx_citations_chunk ON citations(chunk_id);
+CREATE INDEX IF NOT EXISTS idx_citations_post ON citations(post_slug);
 
 -- ========== 收藏管道层 ==========
 -- 微信/浏览器收藏 → 知识库的收件箱。URL 唯一：重复收藏同一链接只更新不新增。
@@ -175,26 +179,6 @@ CREATE TABLE IF NOT EXISTS clippings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_clippings_created ON clippings(created_at DESC);
-
--- ========== 杂谈层 ==========
--- 非正式随笔：结构与 posts 相近，但多一个情绪字段，且不进 RAG 索引
--- tags 直接存 JSON 数组：杂谈总量在几十篇量级，为它建两张关联表不划算
-
-CREATE TABLE IF NOT EXISTS chatter (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  slug         TEXT    NOT NULL UNIQUE,
-  title        TEXT    NOT NULL,
-  excerpt      TEXT    NOT NULL DEFAULT '',
-  content      TEXT    NOT NULL,
-  mood         TEXT    NOT NULL DEFAULT 'calm',
-  tags         TEXT    NOT NULL DEFAULT '[]',
-  cover        TEXT    NOT NULL DEFAULT '',
-  published_at TEXT,
-  created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_chatter_pub ON chatter(published_at DESC, id DESC);
-CREATE INDEX IF NOT EXISTS idx_chatter_mood ON chatter(mood);
 
 -- ========== 说说层 ==========
 -- 短动态：一段话 + 0..9 张图 + 可选地点。images 同样存 JSON 数组。

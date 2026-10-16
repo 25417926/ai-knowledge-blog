@@ -1140,7 +1140,8 @@ async def talk(
         session.add(
             Citation(
                 turn_id=assistant_turn.id,
-                chunk_id=c["chunk_id"],
+                post_slug=c["post_slug"],
+                heading_path=c["heading"],
                 quote=c["quote"][:400],
                 score=c["score"],
             )
@@ -1225,20 +1226,20 @@ async def read_log(session: AsyncSession, session_key: str, agent_slug: str, lim
             await session.execute(
                 select(
                     Citation.turn_id,
-                    Post.slug,
+                    Citation.post_slug,
+                    Citation.heading_path,
                     Post.title,
                     Post.category,
                     Post.source_path,
-                    Chunk.heading_path,
                 )
-                .join(Chunk, Chunk.id == Citation.chunk_id)
-                .join(Post, Post.id == Chunk.post_id)
+                # 锚是 slug 而非 chunk_id：文章改写 / 重导都不会让历史出处失效
+                .join(Post, Post.slug == Citation.post_slug)
                 .where(Citation.turn_id.in_(ids))
                 .order_by(Citation.id)
             )
         ).all()
         pdf_map, _ = await _clipping_marks(session)
-        for turn_id, slug, title, category, source_path, heading in rows:
+        for turn_id, slug, heading, title, category, source_path in rows:
             by_turn.setdefault(turn_id, []).append(
                 {
                     "postSlug": slug,
@@ -1278,7 +1279,6 @@ async def read_log(session: AsyncSession, session_key: str, agent_slug: str, lim
 def citations_out(citations: list[dict]) -> list[CitationOut]:
     return [
         CitationOut(
-            chunk_id=c["chunk_id"],
             post_slug=c["post_slug"],
             post_title=c["post_title"],
             category=c["category"],
