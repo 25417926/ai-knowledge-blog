@@ -1,6 +1,6 @@
 # 执行文档 · AI 个人博客
 
-> 更新于 2026-10-16，数据来自对仓库与数据库的逐项实测（非凭记忆）。
+> 更新于 2026-10-17，数据来自对仓库与数据库的逐项实测（非凭记忆）。
 > 状态标记：✅ 已完成 · 🟡 部分完成 / 有条件可用 · ❌ 未开始 · 🗑 已下线
 >
 > **本文只讲三件事：做到哪了、接下来做什么、欠了什么。**
@@ -14,20 +14,21 @@
 
 主干全部交付且可复现：Next.js 阅读端 + FastAPI 数据层 + RAG 问答 + Agent 内核 + 后台写作，
 零外部服务依赖、无 Key 也能全流程演示。小镇端已下线。剩下的是增强项与债务清理：
-自动摘要与落地导览（重定义后的 5b）、向量检索、收藏管道 HTTP 化、测试。
+摘要兜底（验收标准已被手写摘要满足，工具待建）、落地导览、关系网召回、向量检索、
+收藏管道 HTTP 化、测试。
 
 ---
 
-## 1. 快照（2026-10-16 实测）
+## 1. 快照（2026-10-17 实测）
 
 | 项 | 值 |
 |---|---|
-| 提交 | `cab4eb3` refactor(pet): 宠物只做陪伴，撤掉问答入口 |
+| 提交 | `337f04f` feat(blog): 支持 Obsidian callout 渲染…（本地领先 `origin/main` = `cab4eb3` 四个提交，未 push） |
 | 远程 | https://github.com/25417926/ai-knowledge-blog（public，分支 `main`） |
-| 前端 | `src/` 45 个源文件 / 6156 行（Next.js 15 App Router · React 19 · TS · Tailwind 3.4） |
-| 后端 | `server/` 18 个 `.py` / 4143 行（FastAPI · SQLAlchemy · aiosqlite） |
+| 前端 | `src/` 45 个源文件 / 6299 行（Next.js 15 App Router · React 19 · TS · Tailwind 3.4） |
+| 后端 | `server/` 18 个 `.py` / 4145 行（FastAPI · SQLAlchemy · aiosqlite） |
 | 数据库 | `data/blog.db`，`server/app/schema.sql` 定义 **17 张表** |
-| 内容 | 12 篇笔记 · 131 切分块 · 36 条双链 · 24 个标签 · 8 条说说 · 3 条友链 · 2 篇收藏 · 3 个角色 |
+| 内容 | 12 篇笔记 · 132 切分块 · 36 条双链 · 24 个标签 · 8 条说说 · 3 条友链 · 2 篇收藏 · 3 个角色 |
 | 问答存量 | 170 轮对话（其中 85 轮提问）· 282 条引用（247 条带出处）· 3 个会话 |
 | 测试 | **0 个**（无 `*.test.*` / `*.spec.*`） |
 
@@ -41,13 +42,14 @@
 |---|---|
 | 工程与构建 | 脚手架、Vault 导入脚本、`.env.example` 全量配置项；零原生依赖 |
 | 阅读端 | `/` 卡片墙 · `/timeline` 双视图归档 · `/posts/[slug]` · `/projects` · `/moments` · `/friends` · `/about` |
-| Markdown 管线 | remark/rehype + Shiki 双主题零重渲染、目录、行号、复制、灯箱 |
+| Markdown 管线 | remark/rehype + Shiki 双主题零重渲染、目录、行号、复制、灯箱、Obsidian callout |
 | 主题与氛围 | 暗/亮双主题、氛围背景、开屏、弹幕、PixiJS 桌宠「溟月」 |
 | 内容数据层 | `posts` / `chunks` / `links` / `post_tags`，内容只存一份，三种用途复用 |
 | RAG 检索 | 中文二元组 + IDF；标题 3.0 / 小节 1.6 / 正文 1.0；`RAG_MIN_SCORE=1.0` 兜底 |
 | Agent 内核 | `agents` / `agent_memories` / `agent_relations` / `agent_sessions` / `agent_turns` / `citations` |
 | 博客助手「知行」 | 浮动面板、引用卡片、思考链；`/api/ask` 整包 + `/api/ask/stream` SSE |
 | 真实模型 | DeepSeek（OpenAI 兼容）+ Function Calling 工具循环（≤3 轮）；无 Key 自动回落 Mock |
+| 收藏管道 | trafilatura 抓取 → 笔记体摘抄（见 §5）→ PDF 存档 → 写 vault 建索引；CLI 形态 |
 | 后台 | `/admin` 口令登录、文章 CRUD、友链 CRUD、保存写回 md 并重建索引、对话日志面板 |
 | SEO | `robots` / `sitemap` / `rss` 动态生成；软 404 已修（根级 `loading.tsx` 已移除） |
 | 引用锚点 | `chunk_id` → `post_slug + heading_path + quote`（2026-10-16，见 §3） |
@@ -65,7 +67,7 @@
 - **向量混合检索**：`chunks.embedding` 字段与 `EMBEDDING_*` 配置项已预留，零代码写它。
 - **收藏管道 HTTP 化**：缺 `POST /api/clippings` 与前端「粘贴链接」入口，目前只能跑 CLI。
 - **纯图文章**：正文全在截图里的收藏稿，当前不进检索、命中即抛错提示去看原文 PDF。
-- **测试**：见 §6。
+- **测试**：见 §7。
 
 ---
 
@@ -139,17 +141,43 @@ chunk 尚存活的直接取 slug/heading；其余用 `quote` 前缀在现有 `ch
 
 ---
 
-## 5. 待办（按依赖顺序）
+## 5. 本轮：收藏摘抄改笔记体例 + callout 渲染（2026-10-16）
 
-### P1 · 自动摘要 —— 「会自动总结」的正解
+**为什么改。** 收藏稿原先套的是「是什么 / 核心观点 / 对我的启发」三段式——那是报告体，
+与手写笔记的骨架（`>` 导语 → `## 一、` 分节 → `- **关键词**：说明` → 收尾 callout）不是一路，
+混在同一个 vault 里一眼能看出哪篇是机器写的。
+
+**处置。**
+
+| 层 | 落点 |
+|---|---|
+| 摘抄体例 | `scripts/clip.py`：`SUMMARY_PROMPT` 重写为笔记体；`one_liner()` 改为「只认首行 `>` 当导语，否则退回标题」；笔记正文去掉 `## 三段式总结` 外壳 |
+| callout 渲染 | `src/lib/markdown.ts` 新增 `remarkCallout`：mdast 阶段把 `> [!type] 标题` 换成 `div.callout.callout-<type>` + `.callout-title`；**颜色与图标全走 CSS 变量**，19 个类型，不引图标库 |
+| 样式 | `src/app/globals.css`：`.callout-*` 的 `--callout-rgb` / `--callout-glyph`，标题色 `color-mix(类型色 62%, 正文色)`——浅色不发飘、深色不刺眼 |
+| 问答口径 | `agent_chat.py` 两处 system prompt：出自收藏的片段以「原文存档」为准 |
+
+**验收**：离线 11/11（把 `markdown.ts` 单文件编成 CJS 直调 `renderMarkdown`，覆盖无标题 / 行内加粗
+标题 / 未知类型 / 嵌套 / 列表内 / 折叠标记，以及「普通引用块不受影响」）；浏览器 15/15（真实页面
+无 `[!tip]` 残留，19 个类型的图标与底色都在，双主题按亮度验可读性）。两篇收藏已用真实 LLM 重跑。
+
+**踩到的两个坑**（都不报错，只出错）：① callout 正则结尾**不能写 `$`**——mdast 里软换行是 text 节点
+value 里实打实的 `\n`，`(.*)$` 整体匹配失败且静默；② **先清理段落、再判断是否删段落**，顺序写反会
+因为 `length === 0` 成立而顺手删掉下一个子节点，正文整段被吞。
+
+---
+
+## 6. 待办（按依赖顺序）
+
+### P1 · 摘要兜底 —— 「会自动总结」的收尾
 
 | | |
 |---|---|
-| **目标** | 未标注 summary 的笔记自动生成摘要，写回 frontmatter |
-| **动作** | 复用 `scripts/clip.py` 已有的摘抄提示词（导语 / 分节 / 加粗要点 / 收尾，见笔记体例）对空 summary 的 post 批量生成，写回 md 再跑 `import_vault` 重建 |
+| **现状** | **工具未建**：全仓没有 summary 生成入口，`clip.py` 的摘抄只服务「新收藏的文章」。提示词那一半已就绪（§5） |
+| **目标** | 笔记缺 `summary` 时自动补上，主要面向导入真实 Vault 的场景（见 §7 技术债 8） |
+| **动作** | 复用 `scripts/clip.py` 的摘抄提示词，对 `summary` 为空的 post 生成首行导语写回 frontmatter，再跑 `import_vault` 重建 |
 | **改动面** | 复用收藏管道，不新建模块、不新建表 |
-| **验收** | 12 篇笔记 summary 全非空；`/` 卡片墙与 `/timeline` 的摘要不再空缺 |
-| **注意** | 这是「阶段 5b」重定义后的形态——**不是**新建 `wiki_entries` 那一层 |
+| **验收** | 导入一个含空 summary 的 vault 后，`/` 卡片墙与 `/timeline` 的摘要无空缺 |
+| **注意** | 现有 12 篇笔记的 summary **全是手写的，库里为空 0 条**——原验收标准「12 篇 summary 全非空」已被现状满足，这个工具只在新增笔记 / 导库时才用得上。另外它不是「阶段 5b」重定义后要建的 `wiki_entries` 那一层 |
 
 ### P2 · 落地导览 —— 访客进门知道从哪读
 
@@ -203,7 +231,7 @@ chunk 尚存活的直接取 slug/heading；其余用 `quote` 前缀在现有 `ch
 
 ---
 
-## 6. 技术债
+## 7. 技术债
 
 | # | 项 | 现状 | 处置建议 |
 |---|---|---|---|
@@ -214,7 +242,7 @@ chunk 尚存活的直接取 slug/heading；其余用 `quote` 前缀在现有 `ch
 | 5 | `_town_backup_2026-10-14.zip` | 小镇备份，已被 `.gitignore` 排除但仍占工作区 | 挪到仓库外的备份处 |
 | 6 | 无 `.gitattributes` | Windows 上提交刷 `LF→CRLF` 警告 | 加一个统一 LF，或接受现状 |
 | 7 | 零测试 | 见 P6 | — |
-| 8 | 内容量小 | 12 篇 / 131 块，检索演示效果有限 | 用 `VAULT_DIR=/path python -m scripts.init_db` 导真实 Vault |
+| 8 | 内容量小 | 12 篇 / 132 块，检索演示效果有限 | 用 `VAULT_DIR=/path python -m scripts.init_db` 导真实 Vault（导完正好验证 P1） |
 | 9 | `content/town/agents.json` | 路径带 `town`，但里面住的是博客助手 | 功能无碍，改名会牵动后端与 README，暂不动 |
 | 10 | 站点品牌仍叫「赛博小镇」 | 功能已无小镇 | 保留是刻意决策，想改名说一声 |
 | 11 | 仓库是 public | 笔记与站点文案对外可见 | 想转私有：`gh repo edit --visibility private --accept-visibility-change-consequences` |
@@ -222,7 +250,7 @@ chunk 尚存活的直接取 slug/heading；其余用 `quote` 前缀在现有 `ch
 
 ---
 
-## 7. 验收基线
+## 8. 验收基线
 
 ```bash
 # 后端（另开终端）
@@ -240,6 +268,7 @@ CODEBUDDY_SAFE_DELETE_ENABLED=0 \
 
 - [ ] `/` `/timeline` `/projects` `/moments` `/friends` `/about` 全部 200
 - [ ] `/posts/<真实slug>` 200；`/posts/no-such-post` **404**（防软 404 回归）
+- [ ] 收藏稿里的 `> [!tip] 一句话总结` 渲染成 callout 卡片，页面无 `[!tip]` 字面残留；暗/亮主题标题都看得清
 - [ ] `/api/posts` `/api/tags` `/api/categories` `/api/graph` `/api/moments` `/api/friends` 全部 200；`/api/chatter` **404**
 - [ ] 后台 `/admin/friends` 能增删改，改完 `/friends` 立刻同步（友链只写库，不需要重建索引）
 - [ ] `/api/ask` 返回 `citations`，每条带 `postSlug` / `postTitle` / `heading`
