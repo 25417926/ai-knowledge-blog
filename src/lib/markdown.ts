@@ -39,6 +39,102 @@ export function linkifyWikilinks(markdown: string, linkIndex: Map<string, string
   });
 }
 
+/* ── Obsidian callout ─────────────────────────────────────────── */
+
+type MdNode = {
+  type: string;
+  value?: string;
+  children?: MdNode[];
+  data?: { hName?: string; hProperties?: Record<string, unknown> };
+};
+
+/** `> [!tip] 标题`；收尾的 +/- 是 Obsidian 的折叠标记，本站不折叠，只吃掉不显示。
+ *  只认首行，所以结尾不能用 $ ——mdast 里软换行是 text 里实打实的 \n，$ 会整体匹配失败 */
+const CALLOUT_RE = /^\[!([a-zA-Z][\w-]*)\]([+-]?)[ \t]*([^\n]*)/;
+
+/**
+ * 各类型的图标与默认标题（没写标题时用）。图标由 CSS 的 ::before 取 --callout-glyph，
+ * 类型色取 --callout-rgb，见 globals.css。表里没有的类型落中性色，不会破版。
+ */
+const CALLOUT_META: Record<string, { glyph: string; label: string }> = {
+  note: { glyph: '📝', label: '笔记' },
+  info: { glyph: 'ℹ️', label: '说明' },
+  tip: { glyph: '💡', label: '提示' },
+  hint: { glyph: '💡', label: '提示' },
+  abstract: { glyph: '📋', label: '摘要' },
+  summary: { glyph: '📄', label: '总结' },
+  def: { glyph: '📖', label: '定义' },
+  quote: { glyph: '💬', label: '引用' },
+  example: { glyph: '📌', label: '示例' },
+  success: { glyph: '✅', label: '完成' },
+  question: { glyph: '❓', label: '问题' },
+  warning: { glyph: '⚠️', label: '注意' },
+  caution: { glyph: '⚠️', label: '注意' },
+  important: { glyph: '❗', label: '重要' },
+  danger: { glyph: '🔥', label: '危险' },
+  error: { glyph: '❌', label: '错误' },
+  failure: { glyph: '❌', label: '失败' },
+  bug: { glyph: '🐞', label: '缺陷' },
+  todo: { glyph: '☑️', label: '待办' },
+};
+
+/**
+ * 吃掉段落的第一行（标记行连标题一起），把换行之后的内容留在原处当正文。
+ * 得逐节点走：mdast 里软换行就藏在 text 的 value 里，硬换行才是 break 节点，
+ * 「标记 + 加粗标题」还会把行内节点拆开。
+ */
+function dropFirstLine(children: MdNode[]): void {
+  while (children.length) {
+    const node = children[0];
+    if (node.type === 'text') {
+      const nl = (node.value ?? '').indexOf('\n');
+      if (nl === -1) {
+        children.shift();
+        continue;
+      }
+      node.value = node.value!.slice(nl + 1);
+      if (!node.value) children.shift();
+      return;
+    }
+    children.shift(); // break 与行内节点都算首行的一部分
+    if (node.type === 'break') return;
+  }
+}
+
+/** 首行是 `[!type]` 就就地改成 callout，改不动就原样留着 */
+function convertCallout(quote: MdNode): void {
+  const lead = quote.children?.[0];
+  const text = lead?.type === 'paragraph' ? lead.children?.[0] : undefined;
+  if (text?.type !== 'text') return;
+  const matched = CALLOUT_RE.exec(text.value ?? '');
+  if (!matched) return;
+
+  const type = matched[1].toLowerCase();
+  // 标题里的 ** 与 ` 若原样带进纯文本会露出符号，剥掉
+  const title = matched[3].trim().replace(/[*_`]/g, '');
+  dropFirstLine(lead!.children as MdNode[]);
+  // 首行被吃光才连段落一起删——段里还剩正文时它就是 callout 的第一段
+  if (!lead!.children!.length) quote.children!.shift();
+
+  quote.data = { hName: 'div', hProperties: { className: ['callout', `callout-${type}`] } };
+  quote.children!.unshift({
+    type: 'paragraph',
+    data: { hName: 'p', hProperties: { className: ['callout-title'] } },
+    children: [{ type: 'text', value: title || CALLOUT_META[type]?.label || type }],
+  });
+}
+
+/** remark 插件：遍历全树，把 callout 引用块就地换掉。参数用 unknown 收，免得为此引 mdast 类型 */
+function remarkCallout() {
+  return (tree: unknown) => {
+    const walk = (node: MdNode) => {
+      if (node.type === 'blockquote') convertCallout(node);
+      for (const child of node.children ?? []) walk(child);
+    };
+    walk(tree as MdNode);
+  };
+}
+
 /**
  * 代码块要跟着贴用的语法，但不必把 shiki 的全量语法包都塞进产物，
  * 这里列出本站实际会用到的集合（未收录在名单里的语言由 fallbackLanguage 兜底成纯文本，
@@ -65,6 +161,7 @@ export async function renderMarkdown(markdown: string): Promise<string> {
   const file = await unified()
     .use(remarkParse)
     .use(remarkGfm)
+    .use(remarkCallout)
     .use(remarkRehype, { allowDangerousHtml: false })
     .use(rehypeSlug)
     .use(rehypeShiki, {

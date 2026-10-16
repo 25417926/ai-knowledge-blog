@@ -52,7 +52,7 @@ python -m scripts.clip --list           # 查看已收藏
 ```
 
 抓取用 trafilatura，失败自动降级粘贴；摘抄按手写笔记的体例压一遍（开头一句导语、
-正文按原文脉络分节、要点前加粗关键词、末尾收一句总结），未配 LLM 时出节选式 Mock 摘抄。
+正文按原文脉络分节、要点前加粗关键词、末尾一句 `[!tip]` callout 收尾），未配 LLM 时出节选式 Mock 摘抄。
 URL 唯一，重复收藏原地更新。收藏稿落在
 `content/sample-vault/clippings/`，与手写笔记同库，立刻可被 AI 助手检索引用。
 
@@ -241,6 +241,12 @@ Mock 与闲聊路径没有工具调用，就什么都不画，不表演一段假
 `node:sqlite` 的 null 原型对象；拆分之后它变成了「前端组件不允许 import 任何会发 HTTP 的
 业务模块」——所有取数走 `src/lib/api.ts`，纯常量（`projects.ts` / `site.ts`）
 另存无依赖模块，客户端组件才能安全引用。
+
+**Obsidian callout 是渲染管线里唯一一处「改结构」的 markdown 扩展。** `> [!tip] 标题`
+这类块在 mdast 阶段就被换成 `div.callout.callout-<type>`（外加一个 `.callout-title`），
+图标与类型色全由 CSS 变量派生（见 `globals.css`），所以不引图标库、也不需要在服务端
+认识这套语法。没写标题时补中文默认名（如 `[!info]` → 「说明」），表里没有的类型落中性色，
+不破版。`[[双链]]` 那种是纯文本替换，不涉及节点树。
 
 **代码高亮走 Shiki 双主题。** `@shikijs/rehype` 只往每个 token 写 `--shiki-light` /
 `--shiki-dark` 两个 CSS 变量（`defaultColor: false`），显示哪套由 `.dark` 选择器决定——

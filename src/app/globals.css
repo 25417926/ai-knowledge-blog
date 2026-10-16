@@ -292,6 +292,52 @@ html[data-splash='seen'] .splash {
   .md-body blockquote > * + * {
     margin-top: 0.75rem;
   }
+  /* Obsidian callout（> [!tip] 标题）：底色/边线/图标全由 --callout-rgb 与
+     --callout-glyph 两个变量派生。类型规则必须排在这条之后——同特异性时靠顺序覆盖变量 */
+  .md-body .callout {
+    --callout-rgb: 91 87 245;
+    border-left: 3px solid rgb(var(--callout-rgb) / 0.55);
+    border-radius: 0 0.5rem 0.5rem 0;
+    background: rgb(var(--callout-rgb) / 0.06);
+    padding: 0.85rem 1.1rem;
+    color: rgb(var(--ink-text) / 0.88);
+  }
+  .dark .md-body .callout {
+    background: rgb(var(--callout-rgb) / 0.13);
+  }
+  .md-body .callout > * + * {
+    margin-top: 0.7rem;
+  }
+  .md-body .callout-title {
+    font-family: theme(fontFamily.sans);
+    font-size: 14.5px;
+    font-weight: 600;
+    /* 类型色往正文色里兑一点：浅色主题不至于发飘、深色主题不至于刺眼 */
+    color: color-mix(in srgb, rgb(var(--callout-rgb)) 62%, rgb(var(--ink-text)));
+  }
+  .md-body .callout-title::before {
+    content: var(--callout-glyph, '📌');
+    margin-right: 0.4rem;
+  }
+  .md-body .callout-note { --callout-rgb: 91 87 245; --callout-glyph: '📝'; }
+  .md-body .callout-info { --callout-rgb: 56 189 248; --callout-glyph: 'ℹ️'; }
+  .md-body .callout-tip,
+  .md-body .callout-hint { --callout-rgb: 16 185 129; --callout-glyph: '💡'; }
+  .md-body .callout-abstract { --callout-rgb: 14 165 233; --callout-glyph: '📋'; }
+  .md-body .callout-summary { --callout-rgb: 6 182 212; --callout-glyph: '📄'; }
+  .md-body .callout-def { --callout-rgb: 168 85 247; --callout-glyph: '📖'; }
+  .md-body .callout-quote { --callout-rgb: 100 116 139; --callout-glyph: '💬'; }
+  .md-body .callout-example { --callout-rgb: 236 72 153; --callout-glyph: '📌'; }
+  .md-body .callout-success { --callout-rgb: 34 197 94; --callout-glyph: '✅'; }
+  .md-body .callout-question { --callout-rgb: 202 138 4; --callout-glyph: '❓'; }
+  .md-body .callout-warning,
+  .md-body .callout-caution { --callout-rgb: 217 119 6; --callout-glyph: '⚠️'; }
+  .md-body .callout-important { --callout-rgb: 244 63 94; --callout-glyph: '❗'; }
+  .md-body .callout-danger { --callout-rgb: 239 68 68; --callout-glyph: '🔥'; }
+  .md-body .callout-error,
+  .md-body .callout-failure { --callout-rgb: 239 68 68; --callout-glyph: '❌'; }
+  .md-body .callout-bug { --callout-rgb: 239 68 68; --callout-glyph: '🐞'; }
+  .md-body .callout-todo { --callout-rgb: 56 189 248; --callout-glyph: '☑️'; }
   .md-body code {
     font-family: theme(fontFamily.mono);
     font-size: 0.875em;
