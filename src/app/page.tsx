@@ -1,8 +1,9 @@
 import Link from 'next/link';
 import { Carousel, type CarouselItem } from '@/components/Carousel';
 import { StatusCard, ThemeCard } from '@/components/HomeCards';
+import { TopicGuide } from '@/components/TopicGuide';
 import { coverVars } from '@/lib/cover';
-import { listMoments, listPosts } from '@/lib/api';
+import { listCategories, listMoments, listPosts } from '@/lib/api';
 import { site } from '@/lib/site';
 
 export const dynamic = 'force-dynamic';
@@ -10,7 +11,11 @@ export const dynamic = 'force-dynamic';
 const CAROUSEL_SIZE = 5;
 
 export default async function HomePage() {
-  const [posts, moments] = await Promise.all([listPosts(), listMoments()]);
+  const [posts, moments, categories] = await Promise.all([
+    listPosts(),
+    listMoments(),
+    listCategories(),
+  ]);
 
   // 轮播里的日期取到「日」即可——首页不需要精确到秒，那是归档页的事
   const postItems: CarouselItem[] = posts.slice(0, CAROUSEL_SIZE).map((post) => ({
@@ -102,7 +107,10 @@ export default async function HomePage() {
         </section>
       </div>
 
-      {/* ── 第二排：状态 / 主题 / 说说 ─────────────────────── */}
+      {/* ── 第二排：主题导览（从哪读） ─────────────────────── */}
+      <TopicGuide categories={categories} posts={posts} />
+
+      {/* ── 第三排：状态 / 主题 / 说说 ─────────────────────── */}
       <div className="mt-10 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
         <StatusCard />
         <ThemeCard />

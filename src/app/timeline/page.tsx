@@ -1,8 +1,9 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { TimelineControls } from '@/components/TimelineControls';
+import { categoryLabel } from '@/lib/categoryLabel';
 import { coverVars } from '@/lib/cover';
-import { listPosts, listTags, type PostListItem } from '@/lib/api';
+import { listCategories, listPosts, listTags, type PostListItem } from '@/lib/api';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,7 +31,7 @@ export default async function TimelinePage({
   const view = sp.view === 'matrix' ? 'matrix' : 'chain';
   const category = (sp.category ?? '').trim();
 
-  const tags = await listTags();
+  const [tags, categories] = await Promise.all([listTags(), listCategories()]);
   // 标签既收 slug 也收名字：旧地址带的是名字，标签条上的链接是 slug，两种都得认
   const rawTag = (sp.tag ?? '').trim();
   const tag = tags.find((item) => item.slug === rawTag || item.name === rawTag)?.slug ?? rawTag;
@@ -52,12 +53,19 @@ export default async function TimelinePage({
         <h1 className="font-serif text-[30px] font-semibold tracking-wide text-ink-text sm:text-[36px]">
           归档与探索
         </h1>
-        <p className="mt-3 max-w-2xl text-[13.5px] leading-7 text-ink-dim">
-          所有写过的都在这里，按时间倒序排。"中枢链路"看节奏，"矩阵网格"看全貌。
-        </p>
+        {category ? (
+          <p className="mt-3 max-w-2xl text-[13.5px] leading-7 text-ink-dim">
+            正在看主题 <span className="font-medium text-ink-text">{categoryLabel(category)}</span>，筛出 {posts.length} 篇。
+            换主题点下面的主题条，或回 <Link href="/" className="text-accent-ink">首页导览</Link> 重新挑一个。
+          </p>
+        ) : (
+          <p className="mt-3 max-w-2xl text-[13.5px] leading-7 text-ink-dim">
+            所有写过的都在这里，按时间倒序排。"中枢链路"看节奏，"矩阵网格"看全貌。
+          </p>
+        )}
       </header>
 
-      <TimelineControls tags={tags} count={posts.length} />
+      <TimelineControls tags={tags} categories={categories} count={posts.length} />
 
       <div className="mt-10">
         {posts.length === 0 ? (

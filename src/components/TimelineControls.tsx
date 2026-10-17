@@ -2,20 +2,33 @@
 
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useState, useTransition } from 'react';
+import { categoryLabel } from '@/lib/categoryLabel';
 
 export type TimelineTag = { name: string; slug: string; count: number };
+export type TimelineCategory = { category: string; count: number };
 
 const VIEW_KEY = 'town:timeline-view';
 
 /**
  * 归档页的筛选区。
  *
- * 三件事都写进 URL（`?q=&tag=&view=`），所以是可分享、可后退的；
+ * 四件事都写进 URL（`?q=&tag=&category=&view=`），所以是可分享、可后退的；
  * 内容本身仍由服务端按这些参数渲染，这里只负责改地址。
  * 视图偏好额外存一份 localStorage —— 分享出去的链接不该被访问者的旧偏好覆盖，
  * 但自己反复来的时候要记住上次看到哪一屏。
+ *
+ * 分类（主题）是首页导览的落点：从首页点「进入主题」过来时，这里要能看出
+ * 正在看哪个主题、并且一键切换，所以它和标签一样是可见、可改的筛选维度。
  */
-export function TimelineControls({ tags, count }: { tags: TimelineTag[]; count: number }) {
+export function TimelineControls({
+  tags,
+  categories,
+  count,
+}: {
+  tags: TimelineTag[];
+  categories: TimelineCategory[];
+  count: number;
+}) {
   const router = useRouter();
   const params = useSearchParams();
   const [pending, startTransition] = useTransition();
@@ -111,8 +124,34 @@ export function TimelineControls({ tags, count }: { tags: TimelineTag[]; count: 
         </div>
       </div>
 
+      {/* 主题条：比标签粗一档的粒度，放在标签前面 */}
+      {categories.length > 1 && (
+        <div className="-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-1.5">
+          <span className="shrink-0 pl-1 pr-0.5 font-mono text-[11px] tracking-[0.18em] text-ink-dim">主题</span>
+          <button
+            type="button"
+            onClick={() => apply({ category: '' })}
+            className={`chip shrink-0 ${category === '' ? 'chip-active' : ''}`}
+          >
+            全部主题
+          </button>
+          {categories.map((item) => (
+            <button
+              key={item.category}
+              type="button"
+              onClick={() => apply({ category: category === item.category ? '' : item.category })}
+              className={`chip shrink-0 ${category === item.category ? 'chip-active' : ''}`}
+            >
+              {categoryLabel(item.category)}
+              <span className="font-mono opacity-60">{item.count}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* 标签条横向滚动：数量多时不能把页面撑爆 */}
       <div className="-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-1.5">
+        <span className="shrink-0 pl-1 pr-0.5 font-mono text-[11px] tracking-[0.18em] text-ink-dim">标签</span>
         <button
           type="button"
           onClick={() => apply({ tag: '' })}
