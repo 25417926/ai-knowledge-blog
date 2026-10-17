@@ -14,9 +14,9 @@
 
 主干全部交付且可复现：Next.js 阅读端 + FastAPI 数据层 + RAG 问答 + Agent 内核 + 后台写作，
 零外部服务依赖、无 Key 也能全流程演示。小镇端已下线，访客进门的落地导览、文章之间的
-关系网召回也都补上了（见 §7、§8）。
-剩下的是增强项与债务清理：向量检索、收藏管道 HTTP 化、测试
-（摘要兜底已降入 §10 技术债 7）。
+关系网召回也都补上了（见 §7、§8），纯函数层还有 127 条单测兜底（见 §9）。
+剩下的是增强项与债务清理：向量检索、收藏管道 HTTP 化、e2e 回归脚本化
+（摘要兜底已降入 §11 技术债 7）。
 
 ---
 
@@ -29,9 +29,9 @@
 | 前端 | `src/` 47 个源文件 / 6343 行（Next.js 15 App Router · React 19 · TS · Tailwind 3.4） |
 | 后端 | `server/` 19 个 `.py` / 4342 行（FastAPI · SQLAlchemy · aiosqlite） |
 | 数据库 | `data/blog.db`，`server/app/schema.sql` 定义 **14 张表** |
-| 内容 | 12 篇笔记 · 132 切分块 · 36 条双链 · 24 个标签 · 8 条说说 · 3 条友链 · 2 篇收藏 · 3 个角色 |
+| 内容 | 12 篇笔记 · 126 切分块 · 36 条双链 · 24 个标签 · 8 条说说 · 3 条友链 · 2 篇收藏 · 3 个角色 |
 | 问答存量 | 170 轮对话（其中 85 轮提问）· 282 条引用（247 条带出处）· 3 个会话 |
-| 测试 | **0 个**（无 `*.test.*` / `*.spec.*`） |
+| 测试 | 后端 **127 条**纯函数单测（pytest，1.9s 全绿，见 §9）；前端 e2e 仍是临时脚本、未纳入仓库 |
 
 ---
 
@@ -70,7 +70,7 @@
 - **向量混合检索**：`chunks.embedding` 字段与 `EMBEDDING_*` 配置项已预留，零代码写它。
 - **收藏管道 HTTP 化**：缺 `POST /api/clippings` 与前端「粘贴链接」入口，目前只能跑 CLI。
 - **纯图文章**：正文全在截图里的收藏稿，当前不进检索、命中即抛错提示去看原文 PDF。
-- **测试**：见 §10。
+- **端到端测试**：后端纯函数 127 条已补（§9）；浏览器侧仍是临时脚本，未进仓库。
 
 ---
 
@@ -287,7 +287,64 @@ value 里实打实的 `\n`，`(.*)$` 整体匹配失败且静默；② **先清�
 
 ---
 
-## 9. 待办（按依赖顺序）
+## 9. 本轮：补纯函数测试（2026-10-17）
+
+**为什么是现在。** P2 要动 `_score_chunk`，而 `RAG_MIN_SCORE = 1.0` 是照着现有打分口径标定出来的
+（经验值：闲话 0.57、真实提问 1.5~3.8）。没有测试，改一次公式就等于把阈值凭感觉重调一遍，
+且坏掉时不会报错，只会「答案开始引错文章」。所以先补网，再动刀。
+
+**补了什么。** `server/tests/` 5 个文件 / **127 条**，1.9 秒跑完，**不连库、不发网络请求、不需要 Key**：
+
+| 文件 | 覆盖 | 为什么它值得测 |
+|---|---|---|
+| `test_keyword.py` | `tokenize` / `idf_table` / `overlap` | 问答与相关推荐共用一份分词，漂移只会静默变差 |
+| `test_retrieval.py` | `_score_chunk` · `split_chunks` | P2 的靶子；切块变了，检索就变了 |
+| `test_agent_tools.py` | 阶段/好感度/事实抽取/意图判断/文本裁剪/工具参数归一 | 决定「记不记得住用户说过的话」「问概览会不会去检索」 |
+| `test_content_pure.py` | `to_slug` / `_json_str_list` | `to_slug` 是跨语言双份实现，规则一漂移就「链接点了没反应」 |
+| `test_clip_note.py` | `one_liner` / `mock_summary` | 摘抄首行导语取错，列表里全是标题复读 |
+
+配套：`server/pytest.ini`（`pythonpath = .`，从 `server/` 跑 `python -m pytest`）、
+`server/requirements-dev.txt`（只多一个 pytest，运行依赖不动）。
+
+**用例分两类，这是刻意的。** 一类是契约（标题权重高于正文、未入库的词不得分、幂等、边界闭区间）；
+另一类是**现状锁定**（characterisation）——照搬旧实现留下的口径，改了就该红，逼人先看一眼再动：
+
+- `_score_chunk` 的 idf 里「文档总数」用的是 `len(tokens)`，不是切分块总数。所以查询里塞进没命中的词，
+  命中词的 idf 反而变大（`log(1+4/1) > log(1+1/1)`），部分抵消分母 `sqrt(len)` 的稀释。
+- 命中判定是**子串**，`java` 会命中 `javascript`、`ai` 会命中 `training`。召回宽、精度低。
+
+这两条都已写进 docstring：P2 若改成真实块总数，命中分会整体下移，**`RAG_MIN_SCORE` 必须一起重标**。
+
+**变异检查：证明测试真的会红。** 只跑绿不算数，故意改坏三处再跑——
+
+| 改坏 | 结果 |
+|---|---|
+| `_score_chunk` 标题权重 3.0 → 2.0 | 红（`test_title_beats_heading_beats_body` 等） |
+| `tokenize` 去掉虚词过滤 | 红（`test_particles_cut_the_run`） |
+| `split_chunks` 去掉围栏保护 | 红（`test_fenced_code_keeps_hash_lines_in_body`） |
+
+三处改完都按字节还原（文本模式写回会做行尾翻译，本工作区是 CRLF，md5 必须与改动前一致）。
+
+**写测试时撞出来的三个真问题。**
+
+1. **切块 bug（已修）。** 围栏代码块里的 `# 安装依赖` 被当成一级标题：代码块被劈成两半、
+   注释行从正文里消失（检索也就搜不到那一行），`heading_path` 变成 `Strategy:  Create a new collection`
+   这种注释行。现库实测有 **4 个块围栏不配对**，全在那篇 Python 文档的收藏稿里。
+   修法是给 `split_chunks` 加围栏状态机（```` ``` ```` / `~~~` 进出，围栏内不认标题）。
+   重建索引后 **132 → 126 块**（少的是被劈开又合回去的），断裂块 **0**，`citations` 仍是 282 条
+   ——引用表存的是 `post_slug + heading_path`，不挂 chunk id，所以重建不伤引用。
+2. **`overlap`「完全重合 = 1.0」只在 idf 齐平时成立。** 分子是 idf 之和、分母是两个平方和开方之积，
+   同一组词在 idf 不均匀时只有 0.6。所以「内容重合」这一档的满分本来就不常见——
+   给相关文章调阈值时别拿 1.0 当基准。
+3. **`is_overview_ask` 不认「本文主要讲了哪些」**（正则收 `讲了些什么/讲了点什么/讲了什么`）。
+   这是 Mock 模式的分流口径，动了等于改 Mock 行为，所以只在测试里标注，不改。
+
+**验收**：`python -m pytest` → **127 passed in 1.9s**；变异 3/3 变红且文件按字节还原；
+索引重建后问答冒烟 `POST /api/ask` 返回 200、引用 4 条、heading 正常（`4. More Control Flow Tools > 一、条件与循环基础`）。
+
+---
+
+## 10. 待办（按依赖顺序）
 
 ### P2 · 向量混合检索 —— 关键词保精度、向量保召回
 
@@ -308,25 +365,27 @@ value 里实打实的 `\n`，`(.*)$` 整体匹配失败且静默；② **先清�
 | **改动面** | 后端新增一条路由 + 后台或独立页面加一个表单 |
 | **验收** | 贴一个 URL 进去，文章出现在 vault 里且立刻可被助手引用 |
 
-### P4 · 补齐测试 —— 收益被严重低估
+### P4 · 补齐测试 —— 后端纯函数已完成，剩下浏览器侧
 
-| 优先级 | 对象 | 理由 |
-|---|---|---|
-| 1 | `_score_chunk` 打分函数 | 纯函数最好测；P2 改它之前必须有网兜住 |
-| 2 | 软 404 回归 | `/posts/<不存在>` 必须 404。这个 bug 咬过一次，值得一条 e2e 永久看守 |
-| 3 | 双链解析 / 切分（`content.py`） | 改了会静默影响图谱与检索 |
-| 4 | 好感度与记忆（`agent_chat.py`） | `score` 只增不减、`stage` 派生逻辑易错 |
+2026-10-17 已完成第 1、3、4 项（`_score_chunk` / 切分与双链 / 好感度与记忆，共 127 条，见 §9）。
+剩下第 2 项与浏览器侧：
 
-**验收**：`pytest` 全绿；e2e 可用 `playwright-core` + `channel: 'msedge'`（系统 Edge，不下载 Chromium）。
+| # | 对象 | 现状 | 理由 |
+|---|---|---|---|
+| 1 | 软 404 回归 | ✅ 已写入验收基线，但没有脚本看守 | `/posts/<不存在>` 必须 404。这个 bug 咬过一次，值得一条 e2e 永久看守 |
+| 2 | e2e 脚本入库 | 脚本散在 `~/.workbuddy/binaries/node/workspace/` | 现有 4 个（文章页 / callout / 导览 / 相关文章）每次验收都要手跑，挪进仓库才能复现 |
+| 3 | `related_posts` 与 `retrieve` 的集成测试 | 未做 | 纯函数已锁，但「信号加权后排序是否合理」只能在真库上验；需要一个临时 SQLite 夹具 |
+
+**验收**：`pytest` 全绿（当前 127 passed）；e2e 可用 `playwright-core` + `channel: 'msedge'`（系统 Edge，不下载 Chromium）。
 
 ---
 
-## 10. 技术债
+## 11. 技术债
 
 | # | 项 | 现状 | 处置建议 |
 |---|---|---|---|
 | 1 | 零测试 | 见 P4 | — |
-| 2 | 内容量小 | 12 篇 / 132 块，检索演示效果有限 | 用 `VAULT_DIR=/path python -m scripts.init_db` 导真实 Vault（导完顺手做第 7 条） |
+| 2 | 内容量小 | 12 篇 / 126 块，检索演示效果有限 | 用 `VAULT_DIR=/path python -m scripts.init_db` 导真实 Vault（导完顺手做第 7 条） |
 | 3 | `content/town/agents.json` | 路径带 `town`，但里面住的是博客助手 | 功能无碍，改名会牵动后端与 README，暂不动 |
 | 4 | 站点品牌仍叫「赛博小镇」 | 功能已无小镇 | 保留是刻意决策，想改名说一声 |
 | 5 | 仓库是 public | 笔记与站点文案对外可见 | 想转私有：`gh repo edit --visibility private --accept-visibility-change-consequences` |
@@ -335,11 +394,14 @@ value 里实打实的 `\n`，`(.*)$` 整体匹配失败且静默；② **先清�
 
 ---
 
-## 11. 验收基线
+## 12. 验收基线
 
 ```bash
 # 后端（另开终端）
 cd server && python -m scripts.init_db && python -m uvicorn app.main:app --reload --port 8000
+
+# 单元测试（纯函数，1~2 秒；只多装 pytest，见 requirements-dev.txt）
+cd server && pip install -r requirements-dev.txt && python -m pytest
 
 # 前端
 npm install && npm run dev
@@ -352,6 +414,7 @@ CODEBUDDY_SAFE_DELETE_ENABLED=0 \
 逐项核对：
 
 - [ ] `/` `/timeline` `/projects` `/moments` `/friends` `/about` 全部 200
+- [ ] `cd server && python -m pytest` → **127 passed**（改任何检索/切块/好感度逻辑都先跑这条）
 - [ ] `/posts/<真实slug>` 200；`/posts/no-such-post` **404**（防软 404 回归）
 - [ ] 收藏稿里的 `> [!tip] 一句话总结` 渲染成 callout 卡片，页面无 `[!tip]` 字面残留；暗/亮主题标题都看得清
 - [ ] `/api/posts` `/api/tags` `/api/categories` `/api/graph` `/api/moments` `/api/friends` 全部 200；`/api/chatter` **404**

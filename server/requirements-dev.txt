@@ -1,0 +1,4 @@
+-r requirements.txt
+
+# 只跑纯函数单测用：不连库、不发网络请求，也不需要 LLM Key
+pytest==9.1.1

@@ -36,6 +36,7 @@ npm run dev                   # http://localhost:3000
 | `npm run build` | 前端生产构建 |
 | `npm run server` | 启动 Python 后端（:8000，热重载） |
 | `npm run server:init` | 建表 + 种子 + 导入 Vault（幂等，可反复跑） |
+| `cd server && python -m pytest` | 后端纯函数单测（127 条，1~2 秒；先装 `requirements-dev.txt`） |
 
 导入自己的 Vault：
 
@@ -119,6 +120,7 @@ server/                   后端（FastAPI + SQLAlchemy）
     services/
       content.py      文章 / 说说 / 图谱查询（Node 版 lib 的逐函数移植）
       agent_chat.py   Agent 内核 + RAG 检索 + LLM 适配 + Mock 三分支
+      keyword.py      分词与 IDF 重合度：问答检索与相关文章召回共用同一份规则
     api/routes/
       content.py      内容查询接口
       ask.py          博客助手问答（整包 + SSE 流式双路由）与会话回放
@@ -126,7 +128,10 @@ server/                   后端（FastAPI + SQLAlchemy）
   scripts/
     init_db.py       建表 + 种子 + Vault 导入（幂等）
     clip.py          微信收藏管道：抓取 → 摘抄 → 入库 → 建索引
+  tests/             纯函数单测（pytest，127 条，不连库不发请求）
+  pytest.ini         pythonpath = .，从 server/ 直接 python -m pytest
   requirements.txt
+  requirements-dev.txt   只多一个 pytest
 content/
   sample-vault/      示例 Vault，用来跑通全流程（clippings/ 是收藏管道的自动入库目录）
   moments.json       说说种子数据
@@ -331,6 +336,10 @@ Mock 与闲聊路径没有工具调用，就什么都不画，不表演一段假
       共同标签 / 同被一轮问答引用 / 内容重合三档证据，排除已经互相链接的文章，
       召回理由随卡片一起显示；孤立文章因此在文章页有了下一跳。
       分词抽成 `server/app/services/keyword.py`，问答检索与相关推荐共用一份
+- [x] 纯函数测试 —— `server/tests/` 127 条（pytest，1.9 秒，不连库不发请求）：
+      分词与重合度、`_score_chunk` 打分、切块、好感度与事实抽取、`to_slug` 与前端
+      `normalizeKey` 的同规则用例、摘抄首行导语。顺手修掉切块 bug（围栏代码块里的
+      `# 注释` 被当标题，劈开 4 个块并丢掉注释行），索引重建 132 → 126 块
 
 ## 待办（TODO）
 
@@ -361,6 +370,8 @@ Mock 与闲聊路径没有工具调用，就什么都不画，不表演一段假
 
 1. **向量检索。** 导入 Vault 时可选生成 embedding 写入 `chunks.embedding`，
    与现有关键词检索做混合排序（关键词保精度、向量保召回）。
+   动手前先跑 `cd server && python -m pytest`：`_score_chunk` 的口径已被测试锁定，
+   而 `RAG_MIN_SCORE = 1.0` 是照现有口径标定的，改公式必须连阈值一起重标。
 2. **沉淀闭环。** 把问答日志里高频但站内没有的内容，提示补写成新笔记，
    形成「问 → 答 → 补文档」的正循环。
 3. **编辑器增强。** 正文现在是纯 textarea；补 Markdown 实时预览、代码块插入、

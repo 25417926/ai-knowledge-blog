@@ -94,7 +94,17 @@ def split_chunks(markdown: str) -> list[dict]:
             )
         buffer.clear()
 
+    fence = ""  # 当前处在 ``` / ~~~ 围栏里时记着围栏字符，出围栏前不认标题
     for line in lines:
+        marker = re.match(r"^\s{0,3}(```+|~~~+)", line)
+        if marker:
+            char = marker.group(1)[0]
+            fence = "" if fence == char else (fence or char)
+            buffer.append(line)
+            continue
+        if fence:
+            buffer.append(line)
+            continue
         heading = re.match(r"^(#{1,3})\s+(.+?)\s*$", line)
         if heading:
             flush()
