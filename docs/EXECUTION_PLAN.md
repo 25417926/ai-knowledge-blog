@@ -14,7 +14,7 @@
 
 主干全部交付且可复现：Next.js 阅读端 + FastAPI 数据层 + RAG 问答 + Agent 内核 + 后台写作，
 零外部服务依赖、无 Key 也能全流程演示。小镇端已下线。剩下的是增强项与债务清理：
-落地导览、关系网召回、向量检索、收藏管道 HTTP 化、测试（摘要兜底已降入 §7 技术债 13）。
+落地导览、关系网召回、向量检索、收藏管道 HTTP 化、测试（摘要兜底已降入 §8 技术债 7）。
 
 ---
 
@@ -24,9 +24,9 @@
 |---|---|
 | 提交 | 本地 HEAD 与 `origin/main` 一致（自 `cab4eb3` 起的 7 个提交已全部推送） |
 | 远程 | https://github.com/25417926/ai-knowledge-blog（public，分支 `main`） |
-| 前端 | `src/` 45 个源文件 / 6299 行（Next.js 15 App Router · React 19 · TS · Tailwind 3.4） |
-| 后端 | `server/` 18 个 `.py` / 4145 行（FastAPI · SQLAlchemy · aiosqlite） |
-| 数据库 | `data/blog.db`，`server/app/schema.sql` 定义 **17 张表** |
+| 前端 | `src/` 44 个源文件 / 5992 行（Next.js 15 App Router · React 19 · TS · Tailwind 3.4） |
+| 后端 | `server/` 18 个 `.py` / 4124 行（FastAPI · SQLAlchemy · aiosqlite） |
+| 数据库 | `data/blog.db`，`server/app/schema.sql` 定义 **14 张表** |
 | 内容 | 12 篇笔记 · 132 切分块 · 36 条双链 · 24 个标签 · 8 条说说 · 3 条友链 · 2 篇收藏 · 3 个角色 |
 | 问答存量 | 170 轮对话（其中 85 轮提问）· 282 条引用（247 条带出处）· 3 个会话 |
 | 测试 | **0 个**（无 `*.test.*` / `*.spec.*`） |
@@ -55,7 +55,7 @@
 
 ### 2.2 已下线 🗑
 
-- **Godot 2D 小镇端**（2026-10-14）：代码与素材备份在项目根 `_town_backup_2026-10-14.zip`。
+- **Godot 2D 小镇端**（2026-10-14）：代码与素材备份在仓库外 `D:\porm\workbuddy\archives\_town_backup_2026-10-14.zip`。
 - **杂谈**（2026-10-16）：前后端 15 个牵连点（表 / 路由 / 页面 / 组件 / `moods.ts` / 导航 /
   sitemap / rss / 首页轮播 / 统计口径）全链路移除，6 篇原文与 `chatter` 表一并删除。
   桌宠单击让位给「唤出助手」，双击摸头仍说原来的闲话（`site.pet.lines`），
@@ -66,7 +66,7 @@
 - **向量混合检索**：`chunks.embedding` 字段与 `EMBEDDING_*` 配置项已预留，零代码写它。
 - **收藏管道 HTTP 化**：缺 `POST /api/clippings` 与前端「粘贴链接」入口，目前只能跑 CLI。
 - **纯图文章**：正文全在截图里的收藏稿，当前不进检索、命中即抛错提示去看原文 PDF。
-- **测试**：见 §7。
+- **测试**：见 §8。
 
 ---
 
@@ -165,7 +165,32 @@ value 里实打实的 `\n`，`(.*)$` 整体匹配失败且静默；② **先清�
 
 ---
 
-## 6. 待办（按依赖顺序）
+## 6. 本轮：清死重（2026-10-17）
+
+体检出来的六项死重一次清完，全是「删了不影响任何功能」的东西：
+
+| # | 项 | 处置 |
+|---|---|---|
+| 1 | `settings` 表 | 全仓零读写，只有 `models.py` 一个空壳类 → DDL、ORM、物理表全删 |
+| 2 | `wiki_entries` / `wiki_sources` | 旧「Wiki 自动沉淀」遗留，零引用 → 同上；「自动沉淀」改用落地导览 + 摘要兜底 |
+| 3 | `Pet.tsx`（307 行）+ `public/pets/*.webp` 6 张 | 上一版桌宠，零引用，回退窗口已过 → 删；`public/pets/mingyue/` 22 帧保留 |
+| 4 | `NVIDIA Corporation/umdlogs/` | 显卡驱动留的空目录（0 文件、未跟踪） → 删 |
+| 5 | `_town_backup_2026-10-14.zip`（22.9MB） | 小镇备份，已在 `.gitignore` 但占工作区 → 挪到仓库外 `D:\porm\workbuddy\archives\` |
+| 6 | 无 `.gitattributes` | 本机 `core.autocrlf=true`，每次 `git add` 都刷 CRLF 警告 → 加 `* text=auto eol=lf` |
+
+**旧库的物理表怎么删的。** `schema.sql` 只管「建」，删表得自己来：`database.py` 新增
+`_drop_legacy_tables()`，在 `init_schema()` 里按「先子表、后父表」`DROP TABLE IF EXISTS` 三张表，
+幂等可反复跑。DDL 的唯一出处仍是 `schema.sql`（现在是 14 张表），迁移只负责把旧库对齐到它。
+
+**验收**：重跑 `init_db` 一遍，表数 17 → 14、三张表消失，同时 `citations` 仍是 282 条
+（247 条带出处）—— 与本轮无关的数据一条没动；`next build` 通过，`public/pets` 只剩 `mingyue/`。
+
+**顺带修的一处**：`models.py` 的模块 docstring 还写着「与 `src/lib/schema.sql` 逐表对应」，
+那个路径在数据层搬到 Python 之后就不存在了，一并改成 `server/app/schema.sql`。
+
+---
+
+## 7. 待办（按依赖顺序）
 
 ### P1 · 落地导览 —— 访客进门知道从哪读
 
@@ -219,27 +244,21 @@ value 里实打实的 `\n`，`(.*)$` 整体匹配失败且静默；② **先清�
 
 ---
 
-## 7. 技术债
+## 8. 技术债
 
 | # | 项 | 现状 | 处置建议 |
 |---|---|---|---|
-| 1 | `settings` 表 | 全仓零引用，只有 `models.py` 一个空壳类 | 删（本次未动，等你点头） |
-| 2 | `wiki_entries` / `wiki_sources` | 零引用；且 `wiki_sources.chunk_id` 会跟着重导一起断（本轮刚拆掉同款锚） | 删表；「自动沉淀」改用「落地导览（P1）+ 摘要兜底（本表 13）」的形态 |
-| 3 | `Pet.tsx` | 307 行，零引用（上一版桌宠，回退窗口已过） | 删，连 `public/pets/*.webp` 6 张旧素材 |
-| 4 | `NVIDIA Corporation/umdlogs/` | 显卡驱动留下的空目录，非项目内容 | 删 |
-| 5 | `_town_backup_2026-10-14.zip` | 小镇备份，已被 `.gitignore` 排除但仍占工作区 | 挪到仓库外的备份处 |
-| 6 | 无 `.gitattributes` | Windows 上提交刷 `LF→CRLF` 警告 | 加一个统一 LF，或接受现状 |
-| 7 | 零测试 | 见 P5 | — |
-| 8 | 内容量小 | 12 篇 / 132 块，检索演示效果有限 | 用 `VAULT_DIR=/path python -m scripts.init_db` 导真实 Vault（导完顺手做第 13 条） |
-| 9 | `content/town/agents.json` | 路径带 `town`，但里面住的是博客助手 | 功能无碍，改名会牵动后端与 README，暂不动 |
-| 10 | 站点品牌仍叫「赛博小镇」 | 功能已无小镇 | 保留是刻意决策，想改名说一声 |
-| 11 | 仓库是 public | 笔记与站点文案对外可见 | 想转私有：`gh repo edit --visibility private --accept-visibility-change-consequences` |
-| 12 | 本机构建/预览坑 | 必须用全路径 node，`npx` 不可用；`next build` 要加 `CODEBUDDY_SAFE_DELETE_ENABLED=0` | 已记入项目记忆，照做即可 |
-| 13 | 摘要兜底（原 P1「自动摘要」） | **工具未建**：全仓没有 summary 生成入口，`clip.py` 的摘抄只服务「新收藏的文章」。现有 12 篇的 summary **全是手写的、库里为空 0 条**，故降级——原验收标准「12 篇 summary 全非空」已被现状满足 | 只在新增笔记 / 导真实 Vault 时才需要。届时就着 `init_db` 加一个 `--fill-summary`：扫 `summary` 为空的 post，复用 `clip.py` 的摘抄提示词（§5 的笔记体）生成首行导语写回 frontmatter，再重建索引；不新建模块、不新建表 |
+| 1 | 零测试 | 见 P5 | — |
+| 2 | 内容量小 | 12 篇 / 132 块，检索演示效果有限 | 用 `VAULT_DIR=/path python -m scripts.init_db` 导真实 Vault（导完顺手做第 7 条） |
+| 3 | `content/town/agents.json` | 路径带 `town`，但里面住的是博客助手 | 功能无碍，改名会牵动后端与 README，暂不动 |
+| 4 | 站点品牌仍叫「赛博小镇」 | 功能已无小镇 | 保留是刻意决策，想改名说一声 |
+| 5 | 仓库是 public | 笔记与站点文案对外可见 | 想转私有：`gh repo edit --visibility private --accept-visibility-change-consequences` |
+| 6 | 本机构建/预览坑 | 必须用全路径 node，`npx` 不可用；`next build` 要加 `CODEBUDDY_SAFE_DELETE_ENABLED=0` | 已记入项目记忆，照做即可 |
+| 7 | 摘要兜底（原 P1「自动摘要」） | **工具未建**：全仓没有 summary 生成入口，`clip.py` 的摘抄只服务「新收藏的文章」。现有 12 篇的 summary **全是手写的、库里为空 0 条**，故降级——原验收标准「12 篇 summary 全非空」已被现状满足 | 只在新增笔记 / 导真实 Vault 时才需要。届时就着 `init_db` 加一个 `--fill-summary`：扫 `summary` 为空的 post，复用 `clip.py` 的摘抄提示词（§5 的笔记体）生成首行导语写回 frontmatter，再重建索引；不新建模块、不新建表 |
 
 ---
 
-## 8. 验收基线
+## 9. 验收基线
 
 ```bash
 # 后端（另开终端）

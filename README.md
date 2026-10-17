@@ -1,7 +1,8 @@
 # 赛博小镇 · AI 个人博客
 
 以 Obsidian Vault 为内容源的个人知识博客：**结构化阅读 + 带出处的 AI 问答**，全站共用一个 Agent 内核。
-（曾有一个 Godot 做的 2D 小镇端，已于 2026-10-14 下线，代码与素材备份在 `_town_backup_2026-10-14.zip`。）
+（曾有一个 Godot 做的 2D 小镇端，已于 2026-10-14 下线，备份 `_town_backup_2026-10-14.zip`
+已挪到仓库外的 `D:\porm\workbuddy\archives\`。）
 
 **架构：Next.js 只做前端，Python 做后端**（2026-10-15 起）。数据层、RAG 检索、Agent 内核全部在
 `server/`（FastAPI + SQLAlchemy + SQLite），Next 通过 `src/lib/api.ts` 里的 typed fetch 客户端取数。
@@ -99,7 +100,6 @@ src/                       前端（Next.js App Router）
   components/
     BlogAssistant.tsx   博客助手面板（带出处卡片、思考链；由桌宠派发事件唤出）
     MingyuePet.tsx      鲸鱼娘桌宠「溟月」：PixiJS 帧动画 + 状态机，同时是助手唯一入口
-    Pet.tsx             上一版桌宠（6 张 webp 换 src）。已被 MingyuePet 取代，留着便于一行回退
     Carousel.tsx        卡片轮播（首页复用）
     Toc.tsx             正文目录（滚动高亮）
     CodeCopy.tsx        代码块的语言标签 / 复制 / 行号
@@ -112,7 +112,7 @@ server/                   后端（FastAPI + SQLAlchemy）
     main.py           FastAPI 入口：CORS、lifespan 建表、路由注册
     database.py       引擎与会话：sqlite+aiosqlite，WAL + 外键在 connect 级挂 PRAGMA
     schema.sql        全部 DDL（与数据同源，建表只认这一份）
-    models.py         ORM 模型：16 张表，字段与前端类型逐字对齐
+    models.py         ORM 模型：14 张表，字段与前端类型逐字对齐
     schemas.py        Pydantic 响应模型：snake_case → camelCase 别名生成
     services/
       content.py      文章 / 说说 / 图谱查询（Node 版 lib 的逐函数移植）
@@ -302,7 +302,9 @@ Mock 与闲聊路径没有工具调用，就什么都不画，不表演一段假
       改由桌宠单击派发 `blog-assistant:open` 唤出，agent 与会话依旧唯一
 - [x] 友链改成后台维护 —— `friends` 表 + `/admin/friends` 增删改（原先写死在 `src/lib/friends.ts`），
       前台 `/friends` 改动态取数；种子 `content/friends.json` 仅在表空时灌
-- [ ] 阶段 5b：Wiki 自动沉淀与出处回链（`wiki_entries` / `wiki_sources` 两张表已建但零引用）
+- [ ] 阶段 5b：落地导览 —— 原「Wiki 自动沉淀」方案作废（`wiki_entries` / `wiki_sources`
+      两张零引用的表已随 2026-10-17 的死重清理删除），改为把《知识地图总览》提为主题的入口页、
+      接上 `listCategories()` 做分类导航
 
 ## 待办（TODO）
 
