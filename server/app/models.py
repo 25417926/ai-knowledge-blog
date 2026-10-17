@@ -1,4 +1,4 @@
-"""SQLAlchemy 模型：与 src/lib/schema.sql 逐表对应，字段名保持与前端 TS 类型一致的 camelCase 别名。
+"""SQLAlchemy 模型：与 server/app/schema.sql 逐表对应，字段名保持与前端 TS 类型一致的 camelCase 别名。
 
 刻意不引入 Alembic：库只有十几张表、由导入脚本创建，版本迁移交给 server/scripts/init_db.py。
 """
@@ -9,7 +9,6 @@ from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
-    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -96,28 +95,6 @@ class Chunk(Base):
     embedding: Mapped[bytes | None] = mapped_column("embedding", String(length=1048576))
 
     post: Mapped[Post] = relationship(back_populates="chunks")
-
-
-# ── Wiki 溯源层（schema 已建，代码尚未启用） ──────────────
-
-
-class WikiEntry(Base):
-    __tablename__ = "wiki_entries"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    slug: Mapped[str] = mapped_column(String, unique=True, nullable=False)
-    title: Mapped[str] = mapped_column(String, nullable=False)
-    body: Mapped[str] = mapped_column(Text, nullable=False)
-    auto_generated: Mapped[bool] = mapped_column(Boolean, default=True)
-
-
-class WikiSource(Base):
-    __tablename__ = "wiki_sources"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    wiki_id: Mapped[int] = mapped_column(ForeignKey("wiki_entries.id", ondelete="CASCADE"))
-    chunk_id: Mapped[int | None] = mapped_column(ForeignKey("chunks.id", ondelete="SET NULL"))
-    quote: Mapped[str] = mapped_column(Text, default="")
 
 
 # ── Agent 内核：博客助手与小镇 NPC 共用 ──────────────────
@@ -242,13 +219,3 @@ class Friend(Base):
     tags: Mapped[str] = mapped_column(Text, default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default="datetime('now')")
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default="datetime('now')")
-
-
-# ── 配置 ──────────────────────────────────────────────
-
-
-class Setting(Base):
-    __tablename__ = "settings"
-
-    key: Mapped[str] = mapped_column(String, primary_key=True)
-    value: Mapped[str] = mapped_column(Text, default="")

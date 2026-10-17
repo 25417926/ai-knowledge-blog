@@ -58,27 +58,6 @@ CREATE TABLE IF NOT EXISTS chunks (
 
 CREATE INDEX IF NOT EXISTS idx_chunks_post ON chunks(post_id, ord);
 
--- ========== Wiki 溯源层 ==========
-
-CREATE TABLE IF NOT EXISTS wiki_entries (
-  id             INTEGER PRIMARY KEY AUTOINCREMENT,
-  slug           TEXT    NOT NULL UNIQUE,
-  title          TEXT    NOT NULL,
-  body           TEXT    NOT NULL,
-  auto_generated INTEGER NOT NULL DEFAULT 1,
-  created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
-  updated_at     TEXT    NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS wiki_sources (
-  id       INTEGER PRIMARY KEY AUTOINCREMENT,
-  wiki_id  INTEGER NOT NULL REFERENCES wiki_entries(id) ON DELETE CASCADE,
-  chunk_id INTEGER REFERENCES chunks(id) ON DELETE SET NULL,
-  quote    TEXT    NOT NULL DEFAULT ''
-);
-
-CREATE INDEX IF NOT EXISTS idx_wiki_sources_wiki ON wiki_sources(wiki_id);
-
 -- ========== Agent 内核：博客助手与小镇 NPC 共用 ==========
 -- kind: 'assistant' 博客端助手 | 'npc' 小镇角色
 -- 图书馆 NPC 就是博客助手，用 meta.blogAssistant = true 标记同一实体
@@ -208,10 +187,3 @@ CREATE TABLE IF NOT EXISTS moments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_moments_pub ON moments(published_at DESC, id DESC);
-
--- ========== 配置 ==========
-
-CREATE TABLE IF NOT EXISTS settings (
-  key   TEXT PRIMARY KEY,
-  value TEXT NOT NULL DEFAULT ''
-);

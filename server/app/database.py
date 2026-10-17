@@ -44,6 +44,7 @@ async def init_schema() -> None:
         # 迁移必须在 DDL 之前：schema.sql 里建在新增列上的索引，对旧库会先于补列执行而报错
         await _migrate_columns(conn)
         await _migrate_citations_anchor(conn)
+        await _drop_legacy_tables(conn)
         for statement in ddl.split(";"):
             if statement.strip():
                 await conn.execute(text(statement))
@@ -137,6 +138,17 @@ async def _migrate_columns(conn) -> None:
         rows = (await conn.execute(text(f"PRAGMA table_info({table})"))).fetchall()
         if rows and column not in {r[1] for r in rows}:
             await conn.execute(text(ddl))
+
+
+async def _drop_legacy_tables(conn) -> None:
+    """删掉零引用的死重表。
+
+    `settings` 从未被任何代码读写；`wiki_entries` / `wiki_sources` 是旧「Wiki 自动沉淀」
+    方案的遗留，已改用摘要兜底 + 落地导览，schema.sql 里的 DDL 一并移除。
+    只删物理表，先子表后父表，避免外键残留。幂等，可反复调用。
+    """
+    for table in ("wiki_sources", "wiki_entries", "settings"):
+        await conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
