@@ -36,7 +36,7 @@ npm run dev                   # http://localhost:3000
 | `npm run build` | 前端生产构建 |
 | `npm run server` | 启动 Python 后端（:8000，热重载） |
 | `npm run server:init` | 建表 + 种子 + 导入 Vault（幂等，可反复跑） |
-| `cd server && python -m pytest` | 后端纯函数单测（167 条，2 秒；先装 `requirements-dev.txt`） |
+| `cd server && python -m pytest` | 后端纯函数单测（187 条，2 秒；先装 `requirements-dev.txt`） |
 | `cd server && python -m scripts.embed_chunks` | 补向量（幂等）；`--rebuild` 全量重算，`--stats` 只看现状 |
 | `cd server && python -m scripts.eval_retrieval` | 检索评估：关键词 vs 混合的位次 / hit@4 / MRR |
 
@@ -46,7 +46,8 @@ npm run dev                   # http://localhost:3000
 cd server && VAULT_DIR="/path/to/your/vault" python -m scripts.init_db
 ```
 
-微信收藏 → 知识库（收件箱管道：浏览器打开文章 → 复制链接，其余全自动）：
+微信收藏 → 知识库（收件箱管道：浏览器打开文章 → 复制链接，其余全自动）。
+**两个入口，同一份实现（`server/app/services/clipping.py`）**：
 
 ```bash
 cd server
@@ -54,6 +55,11 @@ python -m scripts.clip <url>            # 抓取 → 笔记体摘抄 → 写 cli
 python -m scripts.clip <url> --paste    # 公众号反爬时：跳过抓取，粘贴全文（第一行当标题）
 python -m scripts.clip --list           # 查看已收藏
 ```
+
+或者完全不开终端：后台 `/admin/clippings` 贴链接点「收藏」，结果卡片会列出每一步
+（抓正文 / 摘抄 / PDF / 写笔记 / 重建索引）。抓不到正文时后端返回 422，页面自动展开
+「粘贴全文」，粘贴模式跳过抓取、其余流程完全一样。列表里可以「重新收藏」（原地更新）
+或「删除」（笔记文件 + 索引一起清，不留搜得到却打不开的文章）。
 
 抓取用 trafilatura，失败自动降级粘贴；摘抄按手写笔记的体例压一遍（开头一句导语、
 正文按原文脉络分节、要点前加粗关键词、末尾一句 `[!tip]` callout 收尾），未配 LLM 时出节选式 Mock 摘抄。
@@ -124,16 +130,18 @@ server/                   后端（FastAPI + SQLAlchemy）
       agent_chat.py   Agent 内核 + RAG 检索 + LLM 适配 + Mock 三分支
       keyword.py      分词与 IDF 重合度：问答检索与相关文章召回共用同一份规则
       embedding.py    向量档：none/hash/openai 三 provider、BLOB 信封、余弦与查询缓存
+      clipping.py     收藏管道：抓取 / 摘抄 / PDF 存档 / 写笔记 / 入库建索引（CLI 与后台共用）
     api/routes/
       content.py      内容查询接口
       ask.py          博客助手问答（整包 + SSE 流式双路由）与会话回放
-      admin.py        后台接口：口令登录 + 文章 CRUD + 友链 CRUD + 对话日志（全部要过 require_admin）
+      clippings.py    收藏的公开出口：原文 PDF 存档下载（按 URL 命中）
+      admin.py        后台接口：口令登录 + 文章 CRUD + 友链 CRUD + 收藏 + 对话日志（全部要过 require_admin）
   scripts/
     init_db.py       建表 + 种子 + Vault 导入（幂等；`--embed` 顺带补向量）
-    clip.py          微信收藏管道：抓取 → 摘抄 → 入库 → 建索引
+    clip.py          微信收藏管道的 CLI 外壳（流程见 services/clipping.py）
     embed_chunks.py  给切分块补向量（幂等、`--rebuild`、`--stats`）
     eval_retrieval.py 检索评估：关键词 vs 混合，并排看位次 / hit@4 / MRR
-  tests/             纯函数单测（pytest，167 条，不连库不发请求）
+  tests/             纯函数单测（pytest，187 条，不连库不发请求）
   pytest.ini         pythonpath = .，从 server/ 直接 python -m pytest
   requirements.txt
   requirements-dev.txt   只多一个 pytest
@@ -365,9 +373,9 @@ Mock 与闲聊路径没有工具调用，就什么都不画，不表演一段假
 
 手边就能开工、方案已经想清楚的事；方向性的长线计划见下方「路线图」。
 
-- [ ] **收藏管道 HTTP 化** —— 现在只有 CLI（`python -m scripts.clip <url>`）。
-      目标补 `POST /api/clippings`（`server/app/api/routes/clippings.py` 目前只有 `GET /clippings/pdf`）
-      并在前端给一个「粘贴链接」入口，省掉开终端这一步
+- [x] **收藏管道 HTTP 化** —— `POST /api/admin/clippings`（贴链接，抓取失败返 422 引导粘贴）
+      + `GET` 列表 + `DELETE`（笔记文件与索引一起清），后台 `/admin/clippings` 一个表单全包；
+      流程从 `scripts/clip.py` 抽到 `services/clipping.py`，CLI 与网页共用同一份实现
 - [ ] **清理测试稿** —— `content/sample-vault/clippings/clip-4-more-control-flow-tools.md`
       是验证 PDF 版式时的 Python 教程稿。确认后按三步删除：删文件 →
       `DELETE FROM posts WHERE slug LIKE 'clip-4%'` → 重跑 `init_db`

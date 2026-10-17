@@ -7,6 +7,7 @@ import { AdminError, adminLogout, adminMe } from '@/lib/admin';
 
 const NAV = [
   { href: '/admin/posts', label: '文章' },
+  { href: '/admin/clippings', label: '收藏' },
   { href: '/admin/friends', label: '友链' },
   { href: '/admin/logs', label: '对话日志' },
 ];

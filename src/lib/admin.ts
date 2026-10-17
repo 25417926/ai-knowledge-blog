@@ -153,3 +153,49 @@ export const adminDeleteFriend = (id: number) =>
 // ── 日志 ──────────────────────────────────────────────
 
 export const adminLogs = (limit = 60) => request<AdminLog>(`/logs?limit=${limit}`);
+
+// ── 收藏 ──────────────────────────────────────────────
+
+export type AdminClipping = {
+  id: number;
+  url: string;
+  title: string;
+  origin: string;
+  wordCount: number;
+  createdAt: string;
+  sourcePath: string;
+  slug: string;
+  hasPdf: boolean;
+  indexable: boolean;
+  postExists: boolean;
+};
+
+export type ClipStep = { label: string; detail: string };
+
+/** 一次收藏的结果。字段与后端 run_clip 的返回逐字对应，别各改各的。 */
+export type ClipResult = {
+  ok: boolean;
+  id: number;
+  url: string;
+  title: string;
+  slug: string;
+  sourcePath: string;
+  origin: string;
+  updated: boolean;
+  chars: number;
+  summarySource: string;
+  pdfBytes: number;
+  indexable: boolean;
+  steps: ClipStep[];
+  stats: { posts: number; chunks: number };
+};
+
+export const adminListClippings = () => request<AdminClipping[]>('/clippings');
+
+export const adminCreateClipping = (input: { url: string; paste?: string; title?: string }) =>
+  request<ClipResult>('/clippings', { method: 'POST', body: JSON.stringify(input) });
+
+export const adminDeleteClipping = (id: number) =>
+  request<{ ok: boolean; slug: string; removedFile: boolean }>(`/clippings/${id}`, {
+    method: 'DELETE',
+  });

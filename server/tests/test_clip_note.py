@@ -4,7 +4,7 @@
 （总结失败时正文是纯文本，没有 `>` 开头，必须退回标题）。
 """
 
-from scripts.clip import mock_summary, one_liner
+from app.services.clipping import mock_summary, one_liner
 
 TITLE = "一篇被收藏的原文"
 

@@ -350,14 +350,18 @@ def configure_llm(base_url: str, api_key: str, model: str) -> None:
     LLM_MODEL = model.strip() or "gpt-4o-mini"
 
 
-async def chat_completion(messages: list[dict], temperature: float = 0.8) -> tuple[str, str]:
+async def chat_completion(
+    messages: list[dict], temperature: float = 0.8, timeout: float = LLM_TIMEOUT
+) -> tuple[str, str]:
     """OpenAI 兼容 chat completion，返回 (正文, 模型名)。
 
     temperature 默认 0.8 保持 Agent 闲聊的多样性；总结类任务传 0.3 一类的低温。
+    timeout 单独可调：闲聊问答 20s 够用，长输出任务（整篇摘抄）不够——实测 8000 字
+    输入 + 结构化输出会卡在 20s 边界，两次里失败一次，失败还只是静默降级。
     """
     if not llm_configured():
         raise RuntimeError("LLM 未配置：缺少 LLM_BASE_URL 或 LLM_API_KEY")
-    async with httpx.AsyncClient(timeout=LLM_TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=timeout) as client:
         res = await client.post(
             f"{LLM_BASE_URL.rstrip('/')}/chat/completions",
             headers={

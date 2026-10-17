@@ -13,6 +13,7 @@ httpOnly cookie，不引 JWT 库——标准库 `hmac` + `compare_digest` 就够
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -29,8 +30,9 @@ from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_session
-from ...models import Friend, Post, PostTag, Tag
+from ...models import Clipping, Friend, Post, PostTag, Tag
 from ...services import agent_chat as svc
+from ...services import clipping as clip_svc
 from ...services.content import list_friends
 from scripts.init_db import PROJECT_ROOT, import_vault, to_slug
 
@@ -374,3 +376,83 @@ async def admin_logs(
 ) -> dict[str, Any]:
     """直接复用阅读面板那份 read_log，字段与前端历史回放逐字一致。"""
     return await svc.read_log(session, SESSION_KEY, ASSISTANT_SLUG, max(1, min(limit, 200)))
+
+
+# ── 收藏 ──────────────────────────────────────────────
+#
+# 管道本体在 services/clipping.py（与 scripts/clip.py 共用）。这里只做三件事：
+# 校验输入、串行化、把结果摊平成前端认得的字段。
+#
+# **必须串行**：两条并发会同时写 vault、同时跑 import_vault，笔记文件名还可能撞在
+# 一起。用一把进程内的锁挡住，第二条直接 409 让人等——比排队到超时诚实。
+
+
+CLIP_LOCK = asyncio.Lock()
+
+
+class ClipBody(BaseModel):
+    url: str = ""
+    paste: str = ""
+    title: str = ""
+
+
+def _clip_log(label: str, detail: str) -> None:
+    """把管道进度打进后端控制台：卡住时先看这里，别猜。"""
+    print(f"  [clip] {label}{f' · {detail}' if detail else ''}")
+
+
+def _clipping_view(row: Clipping, slug: str) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "url": row.url,
+        "title": row.title,
+        "origin": row.origin,
+        "wordCount": row.word_count,
+        "createdAt": row.created_at.strftime("%Y-%m-%d") if row.created_at else "",
+        "sourcePath": row.source_path,
+        "slug": slug,
+        "hasPdf": bool(row.pdf),
+        "indexable": bool(row.index_text),
+    }
+
+
+@router.get("/admin/clippings", dependencies=[Depends(require_admin)])
+async def admin_list_clippings(session: AsyncSession = Depends(get_session)) -> list[dict[str, Any]]:
+    rows = await clip_svc.list_clippings(session)
+    # 笔记被手动删掉时 post 就没了，前端据此把「查看文章」置灰而不是点出 404
+    alive = set((await session.execute(select(Post.slug))).scalars().all())
+    views: list[dict[str, Any]] = []
+    for row in rows:
+        slug = to_slug(Path(row.source_path).stem) if row.source_path else ""
+        view = _clipping_view(row, slug)
+        view["postExists"] = bool(slug) and slug in alive
+        views.append(view)
+    return views
+
+
+@router.post("/admin/clippings", dependencies=[Depends(require_admin)])
+async def admin_create_clipping(
+    body: ClipBody, session: AsyncSession = Depends(get_session)
+) -> dict[str, Any]:
+    """贴个链接就收藏。抓不到正文时前端会引导改成粘贴全文再提交。"""
+    if CLIP_LOCK.locked():
+        raise HTTPException(status_code=409, detail="上一条收藏还在处理，等它跑完再提交")
+    async with CLIP_LOCK:
+        try:
+            return await clip_svc.run_clip(
+                body.url, session=session, paste_text=body.paste, title=body.title, log=_clip_log
+            )
+        except clip_svc.ClipError as err:
+            raise HTTPException(status_code=422, detail=str(err))
+
+
+@router.delete("/admin/clippings/{clipping_id}", dependencies=[Depends(require_admin)])
+async def admin_delete_clipping(
+    clipping_id: int, session: AsyncSession = Depends(get_session)
+) -> dict[str, Any]:
+    row = (
+        await session.execute(select(Clipping).where(Clipping.id == clipping_id))
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="这条收藏已经不在了")
+    return await clip_svc.remove_clipping(session, row)
