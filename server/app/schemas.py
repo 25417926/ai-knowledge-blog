@@ -70,6 +70,22 @@ class GraphData(ORMModel):
     edges: list[dict]
 
 
+class RelatedPost(ORMModel):
+    """相关文章：显式双链之外召回出来的近邻，把「为什么算相关」一并带出去。
+
+    score 只用来排序与排查；界面上展示的是 shared_tags / co_citations 这些可解释的证据。
+    """
+
+    slug: str
+    title: str
+    summary: str
+    category: str
+    score: float
+    shared_tags: list[str]
+    co_citations: int
+    content_overlap: float
+
+
 # ── 友链 ────────────────────────────────────────────────
 
 

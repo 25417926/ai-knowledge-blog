@@ -41,6 +41,18 @@ export type GraphData = {
   edges: { source: string; target: string }[];
 };
 
+/** 相关文章：显式双链之外召回出来的近邻，带上召回理由（后端 related_posts 算好） */
+export type RelatedPost = {
+  slug: string;
+  title: string;
+  summary: string;
+  category: string;
+  score: number;
+  sharedTags: string[];
+  coCitations: number;
+  contentOverlap: number;
+};
+
 export type Moment = {
   id: number;
   content: string;
@@ -126,6 +138,11 @@ export async function getBacklinks(slug: string) {
 
 export async function getOutgoingLinks(slug: string) {
   return get<LinkRef[]>(`/api/posts/${encodeURIComponent(slug)}/outgoing`);
+}
+
+/** 双链之外的相关文章；孤立文章（出链/反链全空）靠它才有下一跳 */
+export async function getRelatedPosts(slug: string) {
+  return get<RelatedPost[]>(`/api/posts/${encodeURIComponent(slug)}/related`);
 }
 
 // ── 说说 ──────────────────────────────────────────────

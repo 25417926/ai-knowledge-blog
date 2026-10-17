@@ -3,10 +3,18 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { CodeCopy } from '@/components/CodeCopy';
 import { Lightbox } from '@/components/Lightbox';
+import { RelatedPosts } from '@/components/RelatedPosts';
 import { Toc } from '@/components/Toc';
 import { coverVars } from '@/lib/cover';
 import { extractHeadings, linkifyWikilinks, renderMarkdown } from '@/lib/markdown';
-import { getBacklinks, getLinkIndex, getOutgoingLinks, getPostBySlug, listPosts } from '@/lib/api';
+import {
+  getBacklinks,
+  getLinkIndex,
+  getOutgoingLinks,
+  getPostBySlug,
+  getRelatedPosts,
+  listPosts,
+} from '@/lib/api';
 import { site } from '@/lib/site';
 
 export const dynamic = 'force-dynamic';
@@ -51,9 +59,10 @@ export default async function PostPage({ params }: Props) {
   const html = await renderMarkdown(linkifyWikilinks(post.content, linkIndex));
   const headings = extractHeadings(html);
 
-  const [backlinks, outgoing] = await Promise.all([
+  const [backlinks, outgoing, related] = await Promise.all([
     getBacklinks(post.slug),
     getOutgoingLinks(post.slug),
+    getRelatedPosts(post.slug),
   ]);
 
   // 上下篇从完整列表里就地找，不额外查库：文章量很小，一次 listPosts 够用
@@ -138,7 +147,9 @@ export default async function PostPage({ params }: Props) {
               <AdjacentLink direction="newer" post={newer} />
             </nav>
 
-            <footer className="mt-10 grid gap-4 sm:grid-cols-2">
+            <RelatedPosts items={related} category={post.category} />
+
+            <footer className="mt-12 grid gap-4 sm:grid-cols-2">
               <LinkPanel title="出链" hint="本文引用了" empty="未引用其他笔记" items={outgoing} />
               <LinkPanel title="反向链接" hint="引用了本文" empty="还没有笔记引用它" items={backlinks} />
             </footer>

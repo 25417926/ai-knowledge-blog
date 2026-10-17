@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import json
 import re
+from collections import defaultdict
 from typing import Any
 
-from sqlalchemy import Integer, String, and_, case, cast, func, or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from ..models import Chunk, Friend, Link, Moment as MomentRow, Post, PostTag, Tag
+from ..models import Citation, Chunk, Friend, Link, Moment as MomentRow, Post, PostTag, Tag
 from ..schemas import (
     CategoryRow,
     FriendItem,
@@ -22,8 +23,10 @@ from ..schemas import (
     Moment,
     PostDetail,
     PostListItem,
+    RelatedPost,
     TagRow,
 )
+from .keyword import idf_table, overlap, token_set
 
 WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]")
 
@@ -258,6 +261,150 @@ async def outgoing_links(session: AsyncSession, slug: str) -> list[LinkRef]:
         .order_by(Post.title)
     )
     return [LinkRef(slug=r.slug, title=r.title) for r in (await session.execute(stmt)).all()]
+
+
+# ── 相关文章（关系网召回的隐式边） ─────────────────────
+# 显式 [[双链]] 之外的第二档关系。权重是排序口径，不是标定出来的概率：
+# 共同标签最经得起解释，给得最重；内容重合只在标签与共引都空着时才起作用（孤立文章）。
+
+RELATED_LIMIT = 6
+W_SHARED_TAG = 3.0
+W_CO_CITATION = 2.0
+W_SAME_CATEGORY = 0.5
+# 重合度是 0~0.12 量级的小数（本库实测），乘到与「一个共同标签」同量级才排得动
+CONTENT_SCALE = 20.0
+# 只拦「一点关系都没有」，弱关联交给排序淘汰
+RELATED_MIN_SCORE = 0.05
+# 证据（标签 / 共引 / 同类目）不足这么多条时，用「只有内容重合」的补齐——宁可标注「主题相近」，
+# 也别让孤立文章的相关文章区空着或只剩一条
+RELATED_FILL_MIN = 3
+
+
+async def related_posts(
+    session: AsyncSession, slug: str, limit: int = RELATED_LIMIT
+) -> list[RelatedPost]:
+    """本文没链接到、但关系最近的几篇文章。
+
+    刻意**排除已有显式双链的文章**（两个方向都算）：出链/反链在文章页另有面板，
+    这一块补的是那两块空着的时候——孤立文章最需要它。
+
+    三档证据，都落到同一个分数里：
+    ① 共同标签；② 同被一轮问答引用过（问答本身就搜过这些片段，等于一份现成的共现证据）；
+    ③ 内容重合（标题 + 摘要 + 切分块的 IDF 加权余弦），无标签、无共引时唯一的线索。
+
+    前两档（含同类目）算「说得清为什么」，直接给；第三档算凑数，只在证据不足
+    `RELATED_FILL_MIN` 条时补进来，且永远排在证据之后。
+    """
+    target = (
+        await session.execute(
+            select(Post).where(Post.slug == slug, Post.status == "published")
+        )
+    ).scalar_one_or_none()
+    if target is None:
+        return []
+
+    posts = (
+        await session.execute(
+            select(Post.id, Post.slug, Post.title, Post.summary, Post.category).where(
+                Post.status == "published"
+            )
+        )
+    ).all()
+    candidates = [p for p in posts if p.id != target.id]
+    if not candidates:
+        return []
+
+    # 已有显式双链的（出链 + 反链）不进这一块；目标未解析的 link 行 target_post_id 为 NULL，滤掉
+    linked_ids: set[int] = set()
+    for stmt in (
+        select(Link.target_post_id).where(Link.source_post_id == target.id),
+        select(Link.source_post_id).where(Link.target_post_id == target.id),
+    ):
+        linked_ids |= {i for i in (await session.execute(stmt)).scalars().all() if i}
+
+    tags_by_post: dict[int, set[str]] = defaultdict(set)
+    for post_id, name in (
+        await session.execute(
+            select(PostTag.post_id, Tag.name).join(Tag, Tag.id == PostTag.tag_id)
+        )
+    ).all():
+        tags_by_post[post_id].add(name)
+
+    # 同被一轮问答引用过：一轮里引 2 篇 = 强证据；答泛问时一轮引 7 篇，那 7 篇之间任意两篇
+    # 都算不上强证据（否则一次概览回答就把它们连成团），故按「该轮被引篇数 - 1」摊薄。
+    # co_citations 记轮次数（给界面看「同被 N 轮问答引用」），score 用摊薄后的权重（给排序用）。
+    turn_posts: dict[int, set[str]] = defaultdict(set)
+    for turn_id, cited_slug in (
+        await session.execute(
+            select(Citation.turn_id, Citation.post_slug).where(Citation.post_slug != "")
+        )
+    ).all():
+        turn_posts[turn_id].add(cited_slug)
+
+    co_weight: dict[str, float] = defaultdict(float)
+    co_turns: dict[str, int] = defaultdict(int)
+    for cited_slugs in turn_posts.values():
+        if len(cited_slugs) < 2 or slug not in cited_slugs:
+            continue
+        share = 1.0 / (len(cited_slugs) - 1)
+        for other in cited_slugs:
+            if other == slug:
+                continue
+            co_weight[other] += share
+            co_turns[other] += 1
+
+    tokens_by_post: dict[int, set[str]] = {
+        p.id: token_set(f"{p.title} {p.summary or ''}") for p in posts
+    }
+    for post_id, heading, body in (
+        await session.execute(
+            select(Chunk.post_id, Chunk.heading_path, Chunk.body)
+            .join(Post, Post.id == Chunk.post_id)
+            .where(Post.status == "published")
+        )
+    ).all():
+        tokens_by_post[post_id] |= token_set(f"{heading} {body}")
+    idf = idf_table(list(tokens_by_post.values()))
+
+    target_tokens = tokens_by_post.get(target.id, set())
+    target_tags = tags_by_post.get(target.id, set())
+
+    # 分两档：说得清「为什么相关」的（共同标签 / 共引 / 同类目）直接给；
+    # 只有内容重合的算凑数，仅在证据不足 3 条时补进来，且永远排在证据之后。
+    evidenced: list[RelatedPost] = []
+    content_only: list[RelatedPost] = []
+    for p in candidates:
+        if p.id in linked_ids:
+            continue
+        shared = sorted(target_tags & tags_by_post.get(p.id, set()))
+        co = co_turns.get(p.slug, 0)
+        same_category = p.category == target.category
+        sim = overlap(target_tokens, tokens_by_post.get(p.id, set()), idf)
+        score = (
+            W_SHARED_TAG * len(shared)
+            + W_CO_CITATION * co_weight.get(p.slug, 0.0)
+            + (W_SAME_CATEGORY if same_category else 0.0)
+            + CONTENT_SCALE * sim
+        )
+        if score < RELATED_MIN_SCORE:
+            continue
+        item = RelatedPost(
+            slug=p.slug,
+            title=p.title,
+            summary=p.summary or "",
+            category=p.category,
+            score=round(score, 3),
+            shared_tags=shared,
+            co_citations=co,
+            content_overlap=round(sim, 4),
+        )
+        (evidenced if (shared or co or same_category) else content_only).append(item)
+
+    evidenced.sort(key=lambda item: (-item.score, item.title))
+    content_only.sort(key=lambda item: (-item.score, item.title))
+    if len(evidenced) < RELATED_FILL_MIN:
+        evidenced += content_only[: RELATED_FILL_MIN - len(evidenced)]
+    return evidenced[:limit]
 
 
 # ── 友链 ──────────────────────────────────────────────

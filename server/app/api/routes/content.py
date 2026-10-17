@@ -20,6 +20,7 @@ from ...schemas import (
     Moment,
     PostDetail,
     PostListItem,
+    RelatedPost,
     TagRow,
 )
 
@@ -70,6 +71,12 @@ async def post_backlinks(slug: str, session: AsyncSession = Depends(get_session)
 @router.get("/posts/{slug}/outgoing", response_model=list[LinkRef])
 async def post_outgoing(slug: str, session: AsyncSession = Depends(get_session)) -> Any:
     return await svc.outgoing_links(session, slug)
+
+
+@router.get("/posts/{slug}/related", response_model=list[RelatedPost])
+async def post_related(slug: str, session: AsyncSession = Depends(get_session)) -> Any:
+    """双链之外的相关文章（共同标签 / 同被问答引用 / 内容重合）。"""
+    return await svc.related_posts(session, slug)
 
 
 @router.get("/link-index", response_model=dict[str, str])

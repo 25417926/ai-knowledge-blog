@@ -37,6 +37,7 @@ from ..models import (
     Post,
 )
 from ..schemas import AffinityView, Citation as CitationOut
+from .keyword import tokenize
 
 STAGES: list[dict] = [
     {"key": "stranger", "label": "陌生", "min": -math.inf},
@@ -155,31 +156,8 @@ def pick(items: list, seed: int):
 
 
 # ────────────────────────────────────────────── 检索层（retrieve.ts 移植）
-
-
-PARTICLES = set("的了是在和与就都而及或吗呢吧啊着过很也还个之其并")
-STOPWORDS = {
-    "的", "了", "是", "在", "和", "与", "就", "都", "而", "及", "或", "一个",
-    "什么", "怎么", "如何", "哪些", "哪个", "为什么", "这个", "那个", "可以",
-}
-
-
-def tokenize(text: str) -> list[str]:
-    lowered = text.lower()
-    tokens: list[str] = []
-    tokens.extend(re.findall(r"[a-z0-9][a-z0-9+#._-]*", lowered))
-    for run in re.split(r"[^一-鿿]+", lowered):
-        if not run:
-            continue
-        if len(run) == 1:
-            tokens.append(run)
-            continue
-        for i in range(len(run) - 1):
-            pair = run[i : i + 2]
-            if pair[0] in PARTICLES or pair[1] in PARTICLES:
-                continue
-            tokens.append(pair)
-    return [t for t in tokens if len(t) > 1 and t not in STOPWORDS]
+# 分词（PARTICLES / STOPWORDS / tokenize）已抽到 services/keyword.py：
+# 收藏管道与相关文章召回都要用同一份规则，两套实现必然漂移。
 
 
 async def _load_chunks(session: AsyncSession, about: str | None) -> list[dict]:
