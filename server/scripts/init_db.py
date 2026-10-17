@@ -388,7 +388,7 @@ async def import_vault(session, vault_dir: Path) -> dict:
     return stats
 
 
-async def main() -> None:
+async def main(embed: bool = False) -> None:
     print("▸ 初始化数据库")
     print(f"  路径：{DB_PATH}")
     await init_schema()
@@ -413,6 +413,17 @@ async def main() -> None:
         if stats["links"] > stats["resolvedLinks"]:
             print(f"  ! 有 {stats['links'] - stats['resolvedLinks']} 条双链指向不存在的笔记")
 
+    if embed:
+        # 导入会重建切分块，向量跟着一起没了 —— 所以补向量只能放在导入之后。
+        # 不开 --embed 时只提示一句：导入要能离线跑完，向量是可选的后置步骤。
+        from . import embed_chunks
+
+        embed_chunks.configure_from_env()
+        print("▸ 补向量")
+        await embed_chunks.run(rebuild=False, stats_only=False)
+    else:
+        print("  · 向量档未处理（需要时跑 python -m scripts.embed_chunks，或加 --embed）")
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main("--embed" in sys.argv[1:]))

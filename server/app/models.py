@@ -92,7 +92,8 @@ class Chunk(Base):
     ord: Mapped[int] = mapped_column(Integer, default=0)
     heading_path: Mapped[str] = mapped_column(String, default="")
     body: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding: Mapped[bytes | None] = mapped_column("embedding", String(length=1048576))
+    # 向量档的可选产物：自带信封（provider + 维度）的 float32 平铺，见 services/embedding.py
+    embedding: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
 
     post: Mapped[Post] = relationship(back_populates="chunks")
 

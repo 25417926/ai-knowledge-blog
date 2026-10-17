@@ -37,6 +37,7 @@ from ..models import (
     Post,
 )
 from ..schemas import AffinityView, Citation as CitationOut
+from . import embedding
 from .keyword import tokenize
 
 STAGES: list[dict] = [
@@ -55,6 +56,12 @@ MAX_TOOL_ROUNDS = 3
 # 检索分数低于此值视为「基本没命中」。实测：真实提问 1.5~3.8，
 # 与词库偶然撞上的闲话只有 0.57（单 token 误命中），1.0 能把两者分开
 RAG_MIN_SCORE = 1.0
+
+# 向量加成：命中分 = 关键词分 + VEC_WEIGHT × max(0, cos - VEC_FLOOR)。
+# 这两个数是照 RAG_MIN_SCORE=1.0 配的：cos=0.5 恰好单独凑够 1.0，cos 低于地板一分不加。
+# 因此阈值口径一个字没改——老路径（没有向量）算出来的分数逐位不变。
+VEC_WEIGHT = 4.0
+VEC_FLOOR = 0.25
 
 LLM_BASE_URL = ""
 LLM_API_KEY = ""
@@ -160,17 +167,23 @@ def pick(items: list, seed: int):
 # 收藏管道与相关文章召回都要用同一份规则，两套实现必然漂移。
 
 
-async def _load_chunks(session: AsyncSession, about: str | None) -> list[dict]:
+async def _load_chunks(
+    session: AsyncSession, about: str | None, with_embedding: bool = False
+) -> list[dict]:
+    columns = [
+        Chunk.id,
+        Chunk.body,
+        Chunk.heading_path,
+        Post.slug,
+        Post.title,
+        Post.category,
+        Post.source_path,
+    ]
+    # 只有向量档真的在用才把这列拉进内存（一百多块无所谓，但没开就别读）
+    if with_embedding:
+        columns.append(Chunk.embedding)
     stmt = (
-        select(
-            Chunk.id,
-            Chunk.body,
-            Chunk.heading_path,
-            Post.slug,
-            Post.title,
-            Post.category,
-            Post.source_path,
-        )
+        select(*columns)
         .join(Post, Post.id == Chunk.post_id)
         # 草稿不进检索：后台里没写完的东西不该被公开助手引用（前端列表/详情早已按状态过滤）
         .where(Post.status == "published")
@@ -178,8 +191,9 @@ async def _load_chunks(session: AsyncSession, about: str | None) -> list[dict]:
     )
     if about:
         stmt = stmt.where(Post.slug == about)
-    return [
-        {
+    rows = []
+    for r in (await session.execute(stmt)).all():
+        row = {
             "id": r.id,
             "body": r.body,
             "heading_path": r.heading_path,
@@ -188,8 +202,10 @@ async def _load_chunks(session: AsyncSession, about: str | None) -> list[dict]:
             "category": r.category,
             "source_path": r.source_path,
         }
-        for r in (await session.execute(stmt)).all()
-    ]
+        if with_embedding:
+            row["embedding"] = r.embedding
+        rows.append(row)
+    return rows
 
 
 async def _clipping_marks(session: AsyncSession) -> tuple[dict[str, str], set[str]]:
@@ -235,13 +251,27 @@ def _score_chunk(row: dict, tokens: list[str], df: dict[str, int]) -> float:
     return score / math.sqrt(max(1, len(tokens)))
 
 
+def _fuse(keyword_score: float, similarity: float | None) -> float:
+    """把关键词分与向量相似度并成一个可排序的分数。
+
+    加成只在「明显相似」之后才给：先减掉地板，低于地板一分不加。所以
+    cos=0.5 单独就能凑够 RAG_MIN_SCORE，而 cos=0.1 不会把无关的块拽进榜单。
+    没有向量（未配置 / 本轮失败 / 该块没算过）时逐位等于原来的关键词分。
+    """
+    if not similarity or similarity <= VEC_FLOOR:
+        return keyword_score
+    return keyword_score + VEC_WEIGHT * (similarity - VEC_FLOOR)
+
+
 async def retrieve(
     session: AsyncSession, query: str, limit: int = 4, about: str | None = None
 ) -> list[dict]:
     tokens = tokenize(query)
     if not tokens:
         return []
-    rows = await _load_chunks(session, about)
+    # 向量档没启用或这次调用失败都会拿到 None：静默退回纯关键词，不打扰用户
+    query_vector = await embedding.embed_query(query)
+    rows = await _load_chunks(session, about, with_embedding=query_vector is not None)
     if not rows:
         return []
     df: dict[str, int] = {}
@@ -251,10 +281,17 @@ async def retrieve(
             for r in rows
             if token in f"{r['title']} {r['heading_path']} {r['body']}".lower()
         )
-    scored = [
-        (row, _score_chunk(row, tokens, df)) for row in rows
-    ]
-    scored = [(r, s) for r, s in scored if s > 0]
+    scored: list[tuple[dict, float, float, float]] = []
+    for row in rows:
+        keyword_score = _score_chunk(row, tokens, df)
+        similarity = (
+            embedding.cosine(query_vector, embedding.usable_for_current(row.get("embedding")))
+            if query_vector
+            else 0.0
+        )
+        total = _fuse(keyword_score, similarity)
+        if total > 0:
+            scored.append((row, total, keyword_score, similarity))
     scored.sort(key=lambda x: x[1], reverse=True)
     pdf_map, no_text = await _clipping_marks(session)
     if scored and scored[0][1] >= RAG_MIN_SCORE and scored[0][0]["source_path"] in no_text:
@@ -266,17 +303,20 @@ async def retrieve(
         )
     return [
         {
-            "chunk_id": r["id"],
-            "post_slug": r["slug"],
-            "post_title": r["title"],
-            "category": r["category"],
-            "heading": r["heading_path"],
-            "quote": r["body"].strip(),
-            "score": round(s, 3),
+            "chunk_id": row["id"],
+            "post_slug": row["slug"],
+            "post_title": row["title"],
+            "category": row["category"],
+            "heading": row["heading_path"],
+            "quote": row["body"].strip(),
+            # score 是排序用的合成分；kw/vec 分开留在返回里，排查「为什么它排第一」时不用重算
+            "score": round(total, 3),
+            "kw_score": round(keyword_score, 3),
+            "vec_score": round(similarity, 4),
             # 收藏文章才带：原文 PDF 存档链接，供交叉验证
-            "pdf_url": pdf_map.get(r["source_path"]) if r["category"] == "clippings" else None,
+            "pdf_url": pdf_map.get(row["source_path"]) if row["category"] == "clippings" else None,
         }
-        for r, s in scored[:limit]
+        for row, total, keyword_score, similarity in scored[:limit]
     ]
 
 

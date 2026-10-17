@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .database import dispose_engine, get_session, init_schema
 from .api.routes import admin, ask, clippings, content
+from .services import embedding
 from .services.agent_chat import configure_llm
 
 load_dotenv()
@@ -26,6 +27,15 @@ async def lifespan(_app: FastAPI):
         os.environ.get("LLM_BASE_URL", ""),
         os.environ.get("LLM_API_KEY", ""),
         os.environ.get("LLM_MODEL", ""),
+    )
+    # 向量档默认 none（纯关键词）。配了 EMBEDDING_PROVIDER 才多一路召回，
+    # 配错/连不上都只降级，不影响问答主链
+    embedding.configure(
+        os.environ.get("EMBEDDING_PROVIDER", ""),
+        os.environ.get("EMBEDDING_BASE_URL", ""),
+        os.environ.get("EMBEDDING_API_KEY", ""),
+        os.environ.get("EMBEDDING_MODEL", ""),
+        os.environ.get("EMBEDDING_DIM", ""),
     )
     await init_schema()
     yield
@@ -58,4 +68,5 @@ app.include_router(admin.router, prefix="/api", tags=["admin"])
 
 @app.get("/api/health")
 async def health() -> dict:
-    return {"status": "ok"}
+    # embedding 一起报出来：调「混合检索怎么没生效」时先看这里，别去翻代码
+    return {"status": "ok", "embedding": embedding.describe()}
