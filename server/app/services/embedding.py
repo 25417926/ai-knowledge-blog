@@ -10,10 +10,15 @@
    （magic + provider 码 + 维度）。读的时候对不上就当没有——宁可少一条召回，
    也不能拿两套空间的向量算余弦，那种错不报错、只静默变蠢。
 
-目前没有可用的语义向量服务（DeepSeek 无 /embeddings），所以内置了 `hash`：
-用 `keyword.tokenize` 的特征做带符号哈希，落到固定维度。它是**字面近邻**，
-能抓改写里的字面重合与词序变化，抓不到真正的同义替换。等哪天真配了
-OpenAI 兼容的 embedding 端点（`EMBEDDING_PROVIDER=openai`），同一套管路直接换成语义。
+DeepSeek 没有 /embeddings，所以内置了 `hash`：用 `keyword.tokenize` 的特征做带符号
+哈希，落到固定维度。它是**字面近邻**，能抓改写里的字面重合与词序变化，抓不到真正的
+同义替换——实测在本语料上没有区分度，只留作链路自检。
+
+真正能用的语义向量来自本机 Ollama（`qwen3-embedding:4b`，2560 维，
+`EMBEDDING_PROVIDER=openai` + `http://127.0.0.1:11434/v1`）。但它有个必须处理的性质：
+**各向异性**——任意两段不相关的中文余弦也有 0.85~0.93，正确答案与无关答案之间没有缝。
+所以检索侧一定要先减掉语料均值（`centroid` / `center`），减完正题 0.3~0.8、闲话 0.10~0.15，
+向量通道才有意义。跳过这一步会得到「什么都能召回、闸门全失效」的假效果。
 """
 
 from __future__ import annotations
@@ -173,6 +178,37 @@ def unpack_vector(blob: bytes | None) -> tuple[str, bytes, list[float]] | None:
         return None
     values = list(struct.unpack_from(f"<{length}f", blob, _HEADER.size))
     return name, tag, values
+
+
+def centroid(vectors: list[list[float]]) -> list[float] | None:
+    """语料均值向量。维度不一致的条目直接跳过（不同 provider 的残留不参与）。
+
+    为什么需要它：真实 embedding（qwen3-embedding 实测）各向异性极强——
+    任意两段不相关的中文，余弦也在 0.85~0.93，正确答案 0.93、无关答案 0.92，
+    中间没有缝。减掉所有块共享的那个均值方向之后，同样的查询会拉到
+    「正确答案 0.6 / 无关 0.1」，区分度才回来。hash 那档的特征本来就在原点附近
+    对称（带符号哈希），均值≈0，减不减几乎一样。
+    """
+    if not vectors:
+        return None
+    dim = len(vectors[0])
+    if not dim:
+        return None
+    usable = [v for v in vectors if len(v) == dim]
+    if not usable:
+        return None
+    acc = [0.0] * dim
+    for vec in usable:
+        for i, x in enumerate(vec):
+            acc[i] += x
+    return [x / len(usable) for x in acc]
+
+
+def center(vec: list[float] | None, mean: list[float] | None) -> list[float] | None:
+    """把向量平移到语料均值、再归一。没有均值或维度不符时原样返回（退化为原空间）。"""
+    if not vec or not mean or len(vec) != len(mean):
+        return vec
+    return _l2([x - m for x, m in zip(vec, mean)])
 
 
 def cosine(a: list[float] | None, b: list[float] | None) -> float:

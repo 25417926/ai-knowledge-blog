@@ -58,10 +58,16 @@ MAX_TOOL_ROUNDS = 3
 RAG_MIN_SCORE = 1.0
 
 # 向量加成：命中分 = 关键词分 + VEC_WEIGHT × max(0, cos - VEC_FLOOR)。
-# 这两个数是照 RAG_MIN_SCORE=1.0 配的：cos=0.5 恰好单独凑够 1.0，cos 低于地板一分不加。
-# 因此阈值口径一个字没改——老路径（没有向量）算出来的分数逐位不变。
-VEC_WEIGHT = 4.0
-VEC_FLOOR = 0.25
+# 这里的 cos 是「减掉语料均值之后」的余弦，不是原始余弦——两个空间差得很远：
+# qwen3-embedding 原始余弦对什么都在 0.86~0.94（无关文本 0.92），减均值后
+# 正题 0.3~0.7、闲话 0.10~0.15。地板按后者标定，0.20 正好卡在闲话最高分之上。
+# 没有向量（未配置 / 本轮失败 / 该块没算过）时逐位等于原来的关键词分。
+VEC_WEIGHT = 10.0
+VEC_FLOOR = 0.15
+
+# 语料均值缓存：签名 = provider + model + 块数 + 最大块 id。
+# 导入新文章、后台改稿都会让签名变，旧的自动不再命中；平时一次提问零开销。
+_CENTROID_CACHE: dict[tuple, list[float]] = {}
 
 LLM_BASE_URL = ""
 LLM_API_KEY = ""
@@ -251,11 +257,55 @@ def _score_chunk(row: dict, tokens: list[str], df: dict[str, int]) -> float:
     return score / math.sqrt(max(1, len(tokens)))
 
 
+async def _corpus_centroid(session: AsyncSession) -> list[float] | None:
+    """全站已发布块向量的均值，向量档才用；不可用返回 None。
+
+    取「全部已发布块」而不是当前这次检索的子集：均值是空间的属性，同一篇文档
+    在不同子集里必须落在同一个坐标系，否则「只搜本文」那一路的分数与全站的
+    没法比，VEC_FLOOR 也就没法用一个数标定。
+    """
+    if not embedding.ready():
+        return None
+    size, last, bytes_total = (
+        await session.execute(
+            select(
+                func.count(Chunk.id),
+                func.max(Chunk.id),
+                # 向量总字节：补向量 / 全量重算时块数与 id 都不变，只有这个会动，
+                # 少了它就会出现「均值还是半份语料算出来的」这种偏差
+                func.sum(func.coalesce(func.length(Chunk.embedding), 0)),
+            )
+            .join(Post, Post.id == Chunk.post_id)
+            .where(Post.status == "published")
+        )
+    ).one()
+    if not size:
+        return None
+    key = (embedding.provider_name(), embedding.model_name(), size, last, bytes_total or 0)
+    hit = _CENTROID_CACHE.get(key)
+    if hit is not None:
+        return hit
+    blobs = (
+        await session.execute(
+            select(Chunk.embedding)
+            .join(Post, Post.id == Chunk.post_id)
+            .where(Post.status == "published")
+        )
+    ).scalars().all()
+    vectors = [v for b in blobs if (v := embedding.usable_for_current(b)) is not None]
+    mean = embedding.centroid(vectors)
+    if mean:
+        _CENTROID_CACHE.clear()  # 只留最新一份，语料变了旧均值没有用处
+        _CENTROID_CACHE[key] = mean
+    return mean
+
+
 def _fuse(keyword_score: float, similarity: float | None) -> float:
     """把关键词分与向量相似度并成一个可排序的分数。
 
-    加成只在「明显相似」之后才给：先减掉地板，低于地板一分不加。所以
-    cos=0.5 单独就能凑够 RAG_MIN_SCORE，而 cos=0.1 不会把无关的块拽进榜单。
+    传入的 similarity 是**去均值后**的余弦：加成只在「明显比语料平均水平像」
+    之后才给，先减掉地板，低于地板一分不加。所以正题单独就能凑够
+    RAG_MIN_SCORE，而闲话（去均值后最高也就 0.15）不会被拽进榜单。
     没有向量（未配置 / 本轮失败 / 该块没算过）时逐位等于原来的关键词分。
     """
     if not similarity or similarity <= VEC_FLOOR:
@@ -271,6 +321,11 @@ async def retrieve(
         return []
     # 向量档没启用或这次调用失败都会拿到 None：静默退回纯关键词，不打扰用户
     query_vector = await embedding.embed_query(query)
+    mean: list[float] | None = None
+    if query_vector is not None:
+        # 查询与文档必须在同一个「去均值」空间里比，否则分数没有意义
+        mean = await _corpus_centroid(session)
+        query_vector = embedding.center(query_vector, mean)
     rows = await _load_chunks(session, about, with_embedding=query_vector is not None)
     if not rows:
         return []
@@ -285,7 +340,9 @@ async def retrieve(
     for row in rows:
         keyword_score = _score_chunk(row, tokens, df)
         similarity = (
-            embedding.cosine(query_vector, embedding.usable_for_current(row.get("embedding")))
+            embedding.cosine(
+                query_vector, embedding.center(embedding.usable_for_current(row.get("embedding")), mean)
+            )
             if query_vector
             else 0.0
         )

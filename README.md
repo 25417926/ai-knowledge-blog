@@ -27,6 +27,8 @@ npm run dev                   # http://localhost:3000
 
 零外部服务依赖：不需要 Docker、不需要装数据库服务器、不需要任何 API Key。
 两个进程各自可热重载；前端未启动时后端仍可独立调试（`http://127.0.0.1:8000/docs` 有完整 API 文档）。
+**唯一可选的外部进程是本地 Ollama**（提供语义向量）：不装也行，检索自动退回纯关键词，
+只是改写提问的命中率会从 15/16 掉回 11/16；开了就是 `.env` 里那三行 `EMBEDDING_*`。
 
 ## 命令
 
@@ -36,7 +38,7 @@ npm run dev                   # http://localhost:3000
 | `npm run build` | 前端生产构建 |
 | `npm run server` | 启动 Python 后端（:8000，热重载） |
 | `npm run server:init` | 建表 + 种子 + 导入 Vault（幂等，可反复跑） |
-| `cd server && python -m pytest` | 后端纯函数单测（187 条，2 秒；先装 `requirements-dev.txt`） |
+| `cd server && python -m pytest` | 后端纯函数单测（194 条，2 秒；先装 `requirements-dev.txt`） |
 | `cd server && python -m scripts.embed_chunks` | 补向量（幂等）；`--rebuild` 全量重算，`--stats` 只看现状 |
 | `cd server && python -m scripts.eval_retrieval` | 检索评估：关键词 vs 混合的位次 / hit@4 / MRR |
 
@@ -129,7 +131,8 @@ server/                   后端（FastAPI + SQLAlchemy）
       content.py      文章 / 说说 / 图谱查询（Node 版 lib 的逐函数移植）
       agent_chat.py   Agent 内核 + RAG 检索 + LLM 适配 + Mock 三分支
       keyword.py      分词与 IDF 重合度：问答检索与相关文章召回共用同一份规则
-      embedding.py    向量档：none/hash/openai 三 provider、BLOB 信封、余弦与查询缓存
+      embedding.py    向量档：none/hash/openai 三 provider、BLOB 信封、去均值、余弦与查询缓存
+      embedding_job.py 补向量：CLI 与两个索引重建入口共用（best-effort，失败不影响导入）
       clipping.py     收藏管道：抓取 / 摘抄 / PDF 存档 / 写笔记 / 入库建索引（CLI 与后台共用）
     api/routes/
       content.py      内容查询接口
@@ -141,7 +144,7 @@ server/                   后端（FastAPI + SQLAlchemy）
     clip.py          微信收藏管道的 CLI 外壳（流程见 services/clipping.py）
     embed_chunks.py  给切分块补向量（幂等、`--rebuild`、`--stats`）
     eval_retrieval.py 检索评估：关键词 vs 混合，并排看位次 / hit@4 / MRR
-  tests/             纯函数单测（pytest，187 条，不连库不发请求）
+  tests/             纯函数单测（pytest，194 条，不连库不发请求）
   pytest.ini         pythonpath = .，从 server/ 直接 python -m pytest
   requirements.txt
   requirements-dev.txt   只多一个 pytest
@@ -246,22 +249,34 @@ Mock 行为与改造前完全一致。每次工具调用记录在 `agent_turns.t
 `better-sqlite3`、不需要 Visual Studio 构建工具。前端 Next.js 常规依赖。
 换任何机器只要 Node ≥ 22.5 + Python ≥ 3.11 即可跑起来。
 
-**向量不上数据库，而且默认不启用。** 几万条以内向量，内存里算余弦比上向量库更快且零运维成本，
-向量以 BLOB 存在 `chunks.embedding`。当前检索默认走「中文二元组 + IDF」——`chunks` 总量在
-几百条量级，全量扫一遍比建索引快，结果也确定可复现。
+**向量不上数据库，但现在真的在用。** 几百条向量放内存里算余弦比上向量库更快、零运维，
+向量以 BLOB 存在 `chunks.embedding`（带 provider + 维度 + 模型指纹的信封，换模型自动失效）。
+语义向量来自本机 Ollama 的 `qwen3-embedding:4b`（2560 维），走 OpenAI 兼容的
+`/v1/embeddings`；关键词仍走「中文二元组 + IDF」，两路合成一个分数：
 
-混合检索的**管线**已经建好（`EMBEDDING_PROVIDER` 可选 `none`/`hash`/`openai`，
-命中分 = 关键词分 + `4.0 × max(0, cos − 0.25)`，老路径分数逐位不变），但默认 `none`：
-本机没有可用的语义向量服务（DeepSeek 没有 `/embeddings`），内置的 `hash` 是
-「没有 IDF、没有长度归一的字面重合」，实测改写提问下正确文章的位次会掉到 55 / 87 位，
-当默认就是拿噪声冒充召回。配一个 OpenAI 兼容的 embedding 端点后，`embed_chunks --rebuild`
-即可启用；`eval_retrieval` 负责告诉你它到底有没有让 MRR 涨上去。
+```
+score = keyword + 10.0 × max(0, cos − 0.15)
+```
 
-**不用 Milvus / pgvector。** 它们只是存与查向量，不产生语义能力——真正的卡点是 embedding
-供应商，不是索引；126 个块全量算余弦不到 1ms；标准部署还要 Docker + etcd + MinIO，
-与「零外部服务依赖」直接冲突。`milvus-lite` 是唯一不碰 Docker 的路子，但仍需供应商，
-Python 3.13 的轮子也不保证有。真到数据过万、配了语义模型那天，只需替换
-`server/app/services/embedding.py`，检索侧调用方不动。
+**关键是那个 cos 不是原始余弦。** qwen3 这类模型的向量空间各向异性极强——任意两段不相关
+的中文余弦也有 0.85~0.93，正确答案 0.93、无关答案 0.92，中间没有缝；直接套阈值的话，
+闲聊提问也能拿到 2.5 分（闸门 1.0 形同虚设）。所以检索前先用**全站语料均值**把查询与
+文档一起对齐，再算余弦：正题落到 0.3~0.8、闲话掉到 0.10~0.15，阈值这才立得住。
+
+同一套 16 条查询（6 条原词 + 10 条改写，`scripts/eval_retrieval.py`）量出来的差别：
+
+| | hit@4 | MRR | 原词 / 改写 |
+|---|---|---|---|
+| 纯关键词 | 11/16 | 0.536 | 6/6 · 5/10 |
+| 关键词 + 向量 | **15/16** | **0.906** | 6/6 · **9/10** |
+
+闲话提问（"今天中午吃什么好"）在向量档下依然是 **0 引用**、如实说没找到——闸门没被撑破。
+换更强/更小的模型时要重跑 `embed_chunks --rebuild` 与 `eval_retrieval`，并把 `VEC_FLOOR`
+按新模型的量级重扫（0.15 / 10.0 是本语料量出来的，不是通用值）。
+
+**不用 Milvus / pgvector。** 它们只是存与查向量，不产生语义能力；126 个块全量算余弦不到 1ms；
+标准部署还要 Docker + etcd + MinIO，与「零外部服务依赖」直接冲突。真到数据过万那天，
+只需替换 `server/app/services/embedding.py`，检索侧调用方不动。
 
 **每句结论都必须能点回原文。** 博客助手的回答建立在检索到的片段之上，
 引用（`citations` 表）随该轮问答一起落库；面板上每个数字角标都能点回原文章节。
@@ -364,10 +379,12 @@ Mock 与闲聊路径没有工具调用，就什么都不画，不表演一段假
       分词与重合度、`_score_chunk` 打分、切块、好感度与事实抽取、`to_slug` 与前端
       `normalizeKey` 的同规则用例、摘抄首行导语。顺手修掉切块 bug（围栏代码块里的
       `# 注释` 被当标题，劈开 4 个块并丢掉注释行），索引重建 132 → 126 块
-- [x] 混合检索管线（默认关闭）—— `services/embedding.py` 三 provider、BLOB 信封
-      （provider + 维度 + 模型指纹）、余弦融合进 `score`、`embed_chunks` 补向量、
-      `eval_retrieval` 评估脚本，另加 40 条单测（合计 167）。**默认 `none`**：
-      量下来 hash 向量没有区分度、本机又没有语义向量供应商，所以只把管子铺好
+- [x] 混合检索（**已启用**）—— `qwen3-embedding:4b`（本机 Ollama）× 关键词双路召回。
+      关键不是「接了个向量模型」，而是发现它的余弦各向异性极强（无关文本 0.92、正确答案 0.93，
+      没有缝），于是检索前先减掉**全站语料均值**再算：hit@4 11→15、MRR 0.536→0.906，
+      闲话提问依然 0 引用。顺带修掉一个隐蔽坑——`import_vault` 每次都删块重建，
+      原先会把全站向量清空（向量通道无声失效），现在按「标题路径 + 正文」继承旧向量，
+      新增/改动的块由 `services/embedding_job.py` 在导入后自动补
 
 ## 待办（TODO）
 
@@ -396,12 +413,13 @@ Mock 与闲聊路径没有工具调用，就什么都不画，不表演一段假
 
 ## 路线图（按依赖顺序）
 
-1. **把向量档真正打开。** 管线已就绪（见上文），缺的是一个语义 embedding 端点。
-   配好 `EMBEDDING_PROVIDER=openai` 后先跑 `python -m scripts.eval_retrieval`，
-   **MRR 真涨了再留**；同时把 `VEC_FLOOR` 按该模型的 cos 量级重标（现在的 0.25
-   是照「相关文本 cos≈0.5~0.8」设的，hash 只有 0.05，所以它默认不动）。
-   要动 `_score_chunk` 的话，`RAG_MIN_SCORE = 1.0` 必须一起重标——实测加块长度归一时
-   hit@4 从 10 涨到 11、MRR 0.501→0.624，但闸门得降到 0.5，闲话就会混进来一个。
+1. **换更强的向量模型时，按同一套流程重标。** 现在的 `qwen3-embedding:4b` 已经把
+   hit@4 从 11/16 拉到 15/16，剩下那 1 条（"公司内部资料怎么让模型用上"）是靠 LLM
+   自己改写查询才命中的。要换 8B 或别的供应商，顺序固定：`embed_chunks --rebuild`
+   → `eval_retrieval` 看 MRR → 扫 `VEC_FLOOR`/`VEC_WEIGHT`（用闲话提问确认闸门没被
+   撑破）→ 才改 `.env`。**别跳过重标**：0.15 / 10.0 是按这个模型的去均值量级量的。
+   要动 `_score_chunk` 的话，`RAG_MIN_SCORE = 1.0` 必须一起重标——实测关键词加块长度
+   归一时 hit@4 从 10 涨到 11、MRR 0.501→0.624，但闸门得降到 0.5，闲话就会混进来一个。
 2. **沉淀闭环。** 把问答日志里高频但站内没有的内容，提示补写成新笔记，
    形成「问 → 答 → 补文档」的正循环。
 3. **编辑器增强。** 正文现在是纯 textarea；补 Markdown 实时预览、代码块插入、

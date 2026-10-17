@@ -158,25 +158,82 @@ class TestUsableForCurrent:
 
 
 class TestFuse:
+    """相似度进来的是「减过语料均值」的余弦：闲话 0.10~0.15、正题 0.3~0.8。
+
+    2026-10-17 换成真实 embedding 后重标：原始余弦对什么都在 0.86~0.94，
+    `cos=0.5 单独凑够 1.0` 那套标定在原空间里成立、在去均值空间里不成立。
+    """
+
     def test_without_vector_score_is_untouched(self):
         # 这条是老路径不变量：没有向量时，分数必须逐位等于原来的关键词分
         assert _fuse(1.37, 0.0) == 1.37
         assert _fuse(1.37, None) == 1.37
 
     def test_below_floor_adds_nothing(self):
-        assert _fuse(0.4, embedding.__dict__.get("VEC_FLOOR", 0) or 0.24) == 0.4
+        from app.services.agent_chat import VEC_FLOOR
 
-    def test_strong_similarity_clears_the_gate_alone(self):
+        assert _fuse(0.4, VEC_FLOOR) == 0.4
+        assert _fuse(0.4, 0.0) == 0.4
+
+    def test_smalltalk_top_score_cannot_clear_the_gate(self):
         from app.services.agent_chat import RAG_MIN_SCORE
 
-        # cos=0.5 是设计上的分界：加分正好 1.0，单靠向量就能过闸
-        assert _fuse(0.0, 0.5) == pytest.approx(RAG_MIN_SCORE)
+        # 实测闲话提问在语料上最高 0.149（去均值后）。这种「像但不对」的分数
+        # 必须一分不加，否则闸门就形同不存在——这是本轮改动最要紧的一条。
+        assert _fuse(0.0, 0.149) < RAG_MIN_SCORE
+
+    def test_clear_match_clears_the_gate_alone(self):
+        from app.services.agent_chat import RAG_MIN_SCORE
+
+        # 正题的典型分（0.3）单靠向量就该过闸
+        assert _fuse(0.0, 0.30) >= RAG_MIN_SCORE
 
     def test_monotonic_in_similarity(self):
         from app.services.agent_chat import VEC_FLOOR
 
-        scores = [_fuse(0.2, c) for c in (VEC_FLOOR, 0.4, 0.6, 0.8, 0.95)]
+        scores = [_fuse(0.2, c) for c in (VEC_FLOOR, VEC_FLOOR + 0.05, 0.4, 0.6, 0.8)]
         assert scores == sorted(scores)
+
+
+# ── 去均值（各向异性修正）───────────────────────────────
+# 真实 embedding 的所有向量都带一个很大的公共分量，余弦因此挤在 0.85 以上，
+# 什么组合都「挺像」。减掉语料均值之后才分得开——下面两条是这个修正的正反面。
+
+
+class TestCentroid:
+    def test_mean_of_symmetric_set_is_near_zero(self):
+        mean = embedding.centroid([[1.0, 0.0], [-1.0, 0.0], [0.0, 2.0], [0.0, -2.0]])
+        assert mean == pytest.approx([0.0, 0.0])
+
+    def test_skips_vectors_with_other_dim(self):
+        mean = embedding.centroid([[2.0, 4.0], [4.0, 8.0], [9.0, 9.0, 9.0]])
+        assert mean == pytest.approx([3.0, 6.0])
+
+    def test_empty_or_all_mismatched_is_none(self):
+        assert embedding.centroid([]) is None
+        assert embedding.centroid([[], []]) is None
+
+    def test_centering_removes_the_shared_component(self):
+        # 四条向量都带一个巨大的公共分量：原始余弦 0.993（"什么都挺像"），
+        # 减掉语料均值（正好等于公共分量）之后只剩各自的方向，余弦归零。
+        common = [5.0] * 6
+        a = [c + d for c, d in zip(common, [1, 0, 0, 0, 0, 0])]
+        b = [c + d for c, d in zip(common, [0, 1, 0, 0, 0, 0])]
+        a2 = [c + d for c, d in zip(common, [-1, 0, 0, 0, 0, 0])]
+        b2 = [c + d for c, d in zip(common, [0, -1, 0, 0, 0, 0])]
+        raw = embedding.cosine(a, b)
+        mean = embedding.centroid([a, b, a2, b2])
+        centered = embedding.cosine(embedding.center(a, mean), embedding.center(b, mean))
+        assert raw > 0.99
+        assert centered == pytest.approx(0.0, abs=1e-9)
+
+    def test_center_without_mean_is_identity(self):
+        vec = [0.3, 0.4]
+        assert embedding.center(vec, None) == vec
+
+    def test_center_normalizes(self):
+        out = embedding.center([3.0, 0.0], [0.0, 0.0])
+        assert out == pytest.approx([1.0, 0.0])
 
 
 # ── embed_texts / 缓存 ─────────────────────────────────

@@ -61,6 +61,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from scripts.init_db import PROJECT_ROOT, import_vault, to_slug
 
 from ..models import Clipping
+from . import embedding_job
 from .agent_chat import chat_completion, llm_configured
 
 # 公众号对非浏览器 UA 直接返回验证页，UA 不像人就什么都抓不到
@@ -806,6 +807,9 @@ async def run_clip(
 
     stats = await import_vault(session, VAULT_DIR)
     step("重建索引", f"{stats['posts']} 篇 · {stats['chunks']} 块")
+    # 新收藏的块没有向量（旧向量只在「内容没变」时才会被继承回来）。
+    # 失败不影响收藏本身——向量只是检索的加分项。
+    await embedding_job.fill_missing(session)
     if index_body:
         step("检索用原文", f"{len(index_body)} 字符（已去图，只在索引里）")
 

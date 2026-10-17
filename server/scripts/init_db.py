@@ -331,6 +331,20 @@ async def import_vault(session, vault_dir: Path) -> dict:
             )
             stats["links"] += 1
 
+        # 重建块之前先把旧向量按「标题路径 + 正文」存下来：块是删了重插的，
+        # 不继承的话每保存一次文章，全站向量就归零一次（向量通道无声失效）。
+        # 只继承内容一字未改的块；改过的块正文变了，继承来的向量才是错的。
+        carried = {
+            (row.heading_path, row.body): row.embedding
+            for row in (
+                await session.execute(
+                    select(Chunk.heading_path, Chunk.body, Chunk.embedding).where(
+                        Chunk.post_id == post_id
+                    )
+                )
+            ).all()
+            if row.embedding is not None
+        }
         await session.execute(Chunk.__table__.delete().where(Chunk.post_id == post_id))
         chunks = list(note["chunks"])
         origin = clip_index.get(note["sourcePath"])
@@ -354,6 +368,7 @@ async def import_vault(session, vault_dir: Path) -> dict:
                     ord=index,
                     heading_path=chunk["headingPath"],
                     body=chunk["body"],
+                    embedding=carried.get((chunk["headingPath"], chunk["body"])),
                 )
             )
             stats["chunks"] += 1

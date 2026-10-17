@@ -33,6 +33,7 @@ from ...database import get_session
 from ...models import Clipping, Friend, Post, PostTag, Tag
 from ...services import agent_chat as svc
 from ...services import clipping as clip_svc
+from ...services import embedding_job
 from ...services.content import list_friends
 from scripts.init_db import PROJECT_ROOT, import_vault, to_slug
 
@@ -209,6 +210,9 @@ async def _save(body: PostBody, slug: str, existing: Post | None, session: Async
     # 重建索引：复用 vault 导入器，切分 / 双链 / 标签一次到位。
     # 全量重导也是**正确**选择——新文章的反向链接要靠「所有笔记一起解析」才能接上。
     stats = await import_vault(session, VAULT_DIR)
+    # 上面这一步会把该文章的块删了重插：内容没改的块已继承旧向量，剩下没向量的
+    # （新写的段落、新文章）在这里补。失败不影响保存本身。
+    await embedding_job.fill_missing(session)
     if status != "published":
         await session.execute(
             Post.__table__.update().where(Post.slug == slug).values(status=status)

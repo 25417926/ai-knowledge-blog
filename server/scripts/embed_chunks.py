@@ -23,13 +23,12 @@ import sys
 import time
 
 from dotenv import load_dotenv
-from sqlalchemy import select, update
 
 from app.database import AsyncSessionLocal, dispose_engine
-from app.models import Chunk, Post
 from app.services import embedding
+from app.services import embedding_job
 
-BATCH = 32
+BATCH = embedding_job.BATCH
 
 
 def configure_from_env(provider: str | None = None, model: str | None = None) -> None:
@@ -42,23 +41,6 @@ def configure_from_env(provider: str | None = None, model: str | None = None) ->
     )
 
 
-async def load_rows() -> list:
-    stmt = (
-        select(
-            Chunk.id,
-            Chunk.heading_path,
-            Chunk.body,
-            Chunk.embedding,
-            Post.title,
-        )
-        .join(Post, Post.id == Chunk.post_id)
-        .where(Post.status == "published")
-        .order_by(Chunk.id)
-    )
-    async with AsyncSessionLocal() as session:
-        return list((await session.execute(stmt)).all())
-
-
 async def run(rebuild: bool, stats_only: bool) -> int:
     info = embedding.describe()
     print(f"provider={info['provider']} model={info['model'] or '-'} dim={info['dim'] or '未定'}")
@@ -67,48 +49,32 @@ async def run(rebuild: bool, stats_only: bool) -> int:
         print("试跑本地字面近邻：python -m scripts.embed_chunks --provider hash")
         return 1
 
-    rows = await load_rows()
-    if not rows:
-        print("没有已发布的切分块，先跑 python -m scripts.init_db")
-        return 1
-
-    fresh = {r.id for r in rows if embedding.usable_for_current(r.embedding) is not None}
-    todo = rows if rebuild else [r for r in rows if r.id not in fresh]
-    print(f"已发布切分块 {len(rows)} 个：可用向量 {len(fresh)} 个，待补 {len(todo)} 个")
-    if stats_only or not todo:
-        if stats_only:
-            print("（--stats：只看不写）")
-        await dispose_engine()
-        return 0
-
     started = time.time()
-    written = 0
-    vector_dim = 0
     async with AsyncSessionLocal() as session:
-        for start in range(0, len(todo), BATCH):
-            batch = todo[start : start + BATCH]
-            texts = [
-                embedding.chunk_text(r.title, r.heading_path or "", r.body or "") for r in batch
-            ]
-            try:
-                vectors = await embedding.embed_texts(texts)
-            except embedding.EmbeddingError as exc:
-                print(f"\n第 {start + 1} 个起这一批失败：{exc}")
-                print("已写入的部分保留（幂等，改好配置重跑即可续上）")
-                await session.commit()
-                await dispose_engine()
-                return 1
-            for r, vec in zip(batch, vectors):
-                await session.execute(
-                    update(Chunk)
-                    .where(Chunk.id == r.id)
-                    .values(embedding=embedding.pack_vector(vec))
-                )
-            await session.commit()
-            written += len(batch)
-            vector_dim = len(vectors[0]) if vectors else vector_dim
-            done = min(start + BATCH, len(todo))
-            print(f"\r  已写入 {done}/{len(todo)}", end="", flush=True)
+        todo, fresh = await embedding_job.plan(session, rebuild)
+        if not fresh and not todo:
+            print("没有已发布的切分块，先跑 python -m scripts.init_db")
+            await dispose_engine()
+            return 1
+        print(f"已发布切分块 {fresh + len(todo) if not rebuild else len(todo)} 个："
+              f"可用向量 {fresh} 个，待补 {len(todo)} 个")
+        if stats_only or not todo:
+            if stats_only:
+                print("（--stats：只看不写）")
+            await dispose_engine()
+            return 0
+
+        def progress(done: int, total: int) -> None:
+            print(f"\r  已写入 {done}/{total}", end="", flush=True)
+
+        try:
+            written, vector_dim = await embedding_job.fill(session, todo, on_progress=progress)
+        except embedding.EmbeddingError as exc:
+            print(f"\n批次失败：{exc}")
+            print("已写入的部分保留（幂等，改好配置重跑即可续上）")
+            await dispose_engine()
+            return 1
+
     await dispose_engine()
     cost = time.time() - started
     print(f"\r完成：写入 {written} 个向量（维度 {vector_dim or '-'}），耗时 {cost:.1f}s")
