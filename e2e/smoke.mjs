@@ -1,19 +1,22 @@
 #!/usr/bin/env node
 /**
- * 四条冒烟 e2e（EXECUTION_PLAN §14.2 P5-3、§18）。
+ * 六条冒烟 e2e（EXECUTION_PLAN §14.2 P5-3、§18、§20）。
  *
- * 为什么只有四条：`src/` 到这一轮为止没有任何前端测试，这里补的是**最容易整体崩掉、
- * 崩了最丢人**的路径，不是覆盖率。四条都刻意不碰 LLM——一次问答要等本机模型
+ * 为什么只有六条：`src/` 到这一轮为止没有任何前端测试，这里补的是**最容易整体崩掉、
+ * 崩了最丢人**的路径，不是覆盖率。六条都刻意不碰 LLM——一次问答要等本机模型
  * 十几秒，把它塞进冒烟会让「跑一下看看」变成没人愿意跑的东西。
  *
  *   1. 首页三区块都在（博主资料 / 最新文章 / 主题导览），且文章数据是通的
  *   2. /posts/<不存在> 是**软 404**：HTTP 404 + 「这条街没有这栋楼」，不能是 500
  *   3. 未登录访问 /admin/* 会被闸门 replace 到 /admin/login，且不泄漏侧栏
  *   4. 文章页的助手有「只搜当前这篇」，首页没有
+ *   5. 导航里的「图谱」能进 /graph，且画出来的节点数与 /api/graph 一致
+ *   6. 收藏稿的 `> [!tip]` 渲染成 callout 卡片，页面上不留字面残留
  *
  * 第 4 条是补漏出来的：`articleSlug` 的正则一直写着 `^/blog/(.+)$`，而路由早就是
  * `/posts/[slug]` —— 于是这个开关在文章页**从来没渲染过**，也没有任何报错。
  * 这类「路由改了、跟着它的字符串没改」的失效，只有 e2e 看得见。
+ * 第 5 条同理：`/api/graph` 与 `getGraph()` 曾经长时间零调用，接口在、页面不在。
  *
  * 依赖：前端 `next start`（:3401）与后端（:8000）都要在跑。脚本先探活，
  * 服务没起时直接给「先起服务」的提示，而不是抛一个看不懂的超时。
@@ -126,7 +129,9 @@ async function preflight() {
   ];
   for (const target of targets) {
     try {
-      const res = await fetch(target.url, { signal: AbortSignal.timeout(5000) });
+      // 20s 不是随手写的：`next start` 之后第一次访问 `/` 要现渲染 + 后端要现拉 GitHub
+      // 热力图，冷启动实测能到 6~8s。给 5s 会让「刚起服务就跑 e2e」稳定误报成「前端不可达」。
+      const res = await fetch(target.url, { signal: AbortSignal.timeout(20_000) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
     } catch (err) {
       throw new Error(
@@ -247,6 +252,46 @@ async function caseScopedAsk(page) {
   return `文章页有「${label}」，首页没有`;
 }
 
+async function caseGraphPage(page) {
+  // 期望值取自接口：只数「画了几个点」证明不了图里画的真是这篇文章的数据
+  const res = await fetch(`${BASE}/api/graph`);
+  if (!res.ok) throw new Error(`/api/graph HTTP ${res.status}`);
+  const data = await res.json();
+  const expected = data.nodes.length;
+
+  await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
+  const navLink = page.locator('nav a[href="/graph"]').first();
+  await navLink.waitFor({ state: 'visible', timeout: TIMEOUT });
+  await navLink.click();
+  await page.waitForURL(/\/graph\/?$/, { timeout: TIMEOUT });
+
+  const drawn = page.locator('[data-graph-node]');
+  await drawn.first().waitFor({ state: 'visible', timeout: TIMEOUT });
+  const count = await drawn.count();
+  if (count !== expected) {
+    throw new Error(`图上 ${count} 个节点，接口 ${expected} 个（渲染层与数据层对不上）`);
+  }
+
+  return `${count} 个节点 · ${data.edges.length} 条连线`;
+}
+
+async function caseCallout(page) {
+  const res = await fetch(`${BASE}/api/posts`);
+  if (!res.ok) throw new Error(`/api/posts HTTP ${res.status}`);
+  const posts = await res.json();
+  const post = (Array.isArray(posts) ? posts : []).find((item) => item.category === 'clippings');
+  if (!post) throw new Error('库里没有收藏稿，这条用例没有样本（先跑 npm run setup）');
+
+  await page.goto(`${BASE}/posts/${encodeURIComponent(post.slug)}`, { waitUntil: 'domcontentloaded' });
+  await page.locator('.callout').first().waitFor({ state: 'visible', timeout: TIMEOUT });
+
+  // 反面：`[!tip]` 字面量漏到正文，说明 remark 插件没接上
+  const text = await page.locator('main').innerText();
+  if (text.includes('[!tip]')) throw new Error(`正文残留 [!tip] 字面量（《${post.title}》）`);
+
+  return `《${post.title}》的 callout 已渲染`;
+}
+
 async function main() {
   console.log(`\nsmoke e2e \u2192 ${BASE}（${CHANNEL}）\n`);
 
@@ -275,6 +320,8 @@ async function main() {
 
   await step('首页三区块 + 数据通路', () => caseHome(page));
   await step('文章页才有「只搜本文」', () => caseScopedAsk(page));
+  await step('图谱页节点数与接口一致', () => caseGraphPage(page));
+  await step('收藏稿 callout 已渲染', () => caseCallout(page));
   await step('不存在的文章走软 404', () => caseSoft404(page));
   await step('未登录访问后台跳登录', () => caseAdminGate(page));
 

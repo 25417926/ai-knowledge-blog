@@ -9,6 +9,7 @@ import { site } from '@/lib/site';
 const NAV = [
   { href: '/', label: '首页' },
   { href: '/timeline', label: '归档' },
+  { href: '/graph', label: '图谱' },
   { href: '/projects', label: '项目' },
   { href: '/moments', label: '说说' },
   { href: '/friends', label: '友链' },

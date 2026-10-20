@@ -7,7 +7,7 @@
 
 - **自动总结**：每篇文章有一句可读的摘要，参与关系网召回，也是卡片与列表的抬头。
 - **关系网查引用**：双链之外还有「相关文章」，按共同标签 / 同被一轮问答引用 / 内容重合
-  算出近邻，并**把理由一起带回来**——孤立文章也有下一跳。
+  算出近邻，并**把理由一起带回来**——孤立文章也有下一跳。双链本身还画成一张图（`/graph`）。
 - **定位访客意图**：首页主题导览给出「这里在讲什么、该从哪读」；每次提问都落库，
   后台「访客意图」把日志压成高频问题、意图分布与**内容缺口**（问了却没出处的那几句）。
 
@@ -65,7 +65,7 @@ cd server && VAULT_DIR="/path/to/your/vault" python -m scripts.init_db
 | `cd server && python -m pytest` | 后端纯函数单测（不连库不发请求，数秒跑完；先装 `requirements-dev.txt`） |
 | `cd server && python -m scripts.embed_chunks` | 补向量（幂等）；`--rebuild` 全量重算，`--stats` 只看现状 |
 | `cd server && python -m scripts.eval_retrieval` | 检索评估：关键词 vs 混合的位次 / hit@4 / MRR |
-| `npm run e2e` | 四条冒烟：首页三区块 / 软 404 / 未登录后台跳登录 / 文章页才有「只搜本文」（需前后端都在跑，用系统 Edge） |
+| `npm run e2e` | 六条冒烟：首页三区块 / 软 404 / 未登录后台跳登录 / 文章页才有「只搜本文」/ 图谱页节点数与接口一致 / 收藏稿 callout 已渲染（需前后端都在跑，用系统 Edge） |
 
 微信收藏 → 知识库（收件箱管道：浏览器打开文章 → 复制链接，其余全自动）。
 两个入口同一份实现（`server/app/services/clipping.py`）：CLI 是 `python -m scripts.clip <url>`
@@ -78,6 +78,7 @@ cd server && VAULT_DIR="/path/to/your/vault" python -m scripts.init_db
 |---|---|
 | `/` | 首页：资料卡 + 最新文章轮播 + 主题导览（全站索引入口 + 分类导航）+ GitHub 热力图 |
 | `/timeline` | 归档与探索：搜索 + 主题 + 标签 + 双视图（中枢链路 / 矩阵网格） |
+| `/graph` | 关系网：全站双链的力导图，节点是文章、连线是 `[[双链]]`，悬停看邻居、点节点进文章，孤立文章单列 |
 | `/posts/[slug]` | 文章详情：封顶封面、目录、代码高亮、灯箱、上下篇、相关文章、出链/反链 |
 | `/projects` | 项目矩阵：搜索 + 技术栈胶囊 + 外链 |
 | `/moments` | 说说流：宫格自适应、排序切换、搜索 |
@@ -93,6 +94,7 @@ src/                       前端（Next.js App Router）
   app/
     page.tsx         首页：资料卡 + 最新文章轮播 + 主题导览 + GitHub 热力图
     timeline/        归档（筛选条件走 URL，便于分享与后退）
+    graph/           关系网（双链力导图，页面取 /api/graph）
     posts/[slug]/    文章详情
     moments/         说说流
     projects/        项目矩阵
@@ -120,6 +122,7 @@ src/                       前端（Next.js App Router）
     CodeCopy.tsx        代码块的语言标签 / 复制 / 行号
     Lightbox.tsx        图片灯箱（事件委托，文章与说说复用）
     RelatedPosts.tsx    文章页「相关文章」：双链之外的隐式近邻，卡片上带召回理由
+    LinkGraph.tsx       关系网：确定性力导（无图形库）+ 悬停高亮邻居 + 点节点进文章
     TimelineControls.tsx / ProjectsBoard.tsx / MomentsBoard.tsx
     SiteHeader.tsx / SiteFooter.tsx / Danmaku.tsx / PageHeader.tsx
     AmbientBackdrop.tsx / ThemeToggle.tsx
@@ -160,7 +163,8 @@ content/
   friends.json       友链种子数据（仅在 friends 表为空时灌，之后归后台管）
   town/agents.json   角色设定（人格、口吻），博客助手也在这里
 e2e/
-  smoke.mjs          四条冒烟：首页三区块 / 软 404 / 未登录后台跳登录 / 文章页的「只搜本文」
+  smoke.mjs          六条冒烟：首页三区块 / 软 404 / 未登录后台跳登录 / 文章页的「只搜本文」
+                     / 图谱页节点数与接口一致 / 收藏稿 callout 已渲染
                      （不碰 LLM；浏览器用系统 Edge，不下载 Chromium）
 docs/
   DESIGN.md          设计与实现说明：架构取舍、检索标定、素材规格、配置与构建注意事项
@@ -190,8 +194,9 @@ public/
 
 - **纯图文章**（公众号正文全在截图里）去图后不足 200 字即不进检索，命中时提示去看原文 PDF。
   候选方向：OCR 抽字 / 视觉模型描述图片 / 干脆不索引。
-- **前端只有四条冒烟**：`npm run e2e` 盯住「首页三区块 / 软 404 / 后台跳登录 / 文章页的只搜本文」——
-  这是整体崩掉最丢人的路径，不是覆盖率。助手问答、编辑器这类交互仍靠临时脚本，没有固化。
+- **前端只有六条冒烟**：`npm run e2e` 盯住「首页三区块 / 软 404 / 后台跳登录 / 文章页的只搜本文 /
+  图谱页节点数 / 收藏稿 callout」——这是整体崩掉最丢人的路径，不是覆盖率。
+  助手问答、编辑器、收藏这类交互仍靠临时脚本，没有固化。
 - **桌宠素材对齐**：`hover` 三帧水平中心差 12% 帧宽、`pet_head` 的手臂被左边缘切出平口，
   都要重跑生图，代码补不了。
 
