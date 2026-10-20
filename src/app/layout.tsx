@@ -6,7 +6,6 @@ import { MingyuePet } from '@/components/MingyuePet';
 import { Danmaku } from '@/components/Danmaku';
 import { SiteFooter } from '@/components/SiteFooter';
 import { SiteHeader } from '@/components/SiteHeader';
-import { Splash } from '@/components/Splash';
 import { site } from '@/lib/site';
 
 export const metadata: Metadata = {
@@ -29,11 +28,10 @@ export const metadata: Metadata = {
 };
 
 /**
- * 首屏防闪烁脚本，两件事都必须在样式生效前完成：
- *   1) 主题：默认深色（站点的「深空」气质），用户手动切换后以 localStorage 为准；
- *   2) 开屏：同一会话内已播过就打标记，CSS 直接隐藏覆盖层，避免第一帧闪一下。
+ * 首屏防闪烁脚本：主题必须在样式生效前定下来。
+ * 默认深色（站点的「深空」气质），用户手动切换后以 localStorage 为准。
  */
-const BOOT_INIT = `(function(){try{var k='town-theme';var v=localStorage.getItem(k);var d=v==='light'?'light':'dark';document.documentElement.classList.toggle('dark',d==='dark');}catch(e){document.documentElement.classList.add('dark');}try{if(sessionStorage.getItem('cyber-town:splash')==='1'){document.documentElement.setAttribute('data-splash','seen');}}catch(e){}})();`;
+const BOOT_INIT = `(function(){try{var k='town-theme';var v=localStorage.getItem(k);var d=v==='light'?'light':'dark';document.documentElement.classList.toggle('dark',d==='dark');}catch(e){document.documentElement.classList.add('dark');}})();`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -52,7 +50,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
         <AmbientBackdrop />
         <Danmaku />
-        <Splash />
         <SiteHeader />
         <div id="main">{children}</div>
         <SiteFooter />

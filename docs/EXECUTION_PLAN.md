@@ -31,7 +31,7 @@
 | 前端 | `src/` 48 个源文件 / 6725 行（Next.js 15 App Router · React 19 · TS · Tailwind 3.4） |
 | 后端 | `server/` 30 个 `.py` / 6254 行（FastAPI · SQLAlchemy · aiosqlite） |
 | 数据库 | `data/blog.db`，`server/app/schema.sql` 定义 **14 张表** |
-| 内容 | 12 篇笔记 · 126 切分块 · 36 条双链 · 24 个标签 · 8 条说说 · 3 条友链 · 2 篇收藏 · 3 个角色 |
+| 内容 | 12 篇笔记 · 126 切分块 · 36 条双链 · 24 个标签 · 8 条说说 · 3 条友链 · 2 篇收藏 · 1 个角色（知行） |
 | 问答存量 | 170 轮对话（其中 85 轮提问）· 282 条引用（247 条带出处）· 3 个会话 |
 | 测试 | 后端 **209 条**纯函数单测（pytest，2.4s 全绿，见 §9、§10、§11）；前端 e2e 仍是临时脚本、未纳入仓库 |
 | 向量档 | `chunks.embedding` BLOB 已落库（126 个块，`qwen3-embedding:4b`/2560 维）；检索侧减均值后融合，见 §10.4 |
@@ -47,7 +47,7 @@
 | 工程与构建 | 脚手架、Vault 导入脚本、`.env.example` 全量配置项；零原生依赖 |
 | 阅读端 | `/` 卡片墙 · `/timeline` 双视图归档 · `/posts/[slug]` · `/projects` · `/moments` · `/friends` · `/about` |
 | Markdown 管线 | remark/rehype + Shiki 双主题零重渲染、目录、行号、复制、灯箱、Obsidian callout |
-| 主题与氛围 | 暗/亮双主题、氛围背景、开屏、弹幕、PixiJS 桌宠「溟月」 |
+| 主题与氛围 | 暗/亮双主题、氛围背景、弹幕、PixiJS 桌宠「溟月」（开屏已于 2026-10-20 下线） |
 | 内容数据层 | `posts` / `chunks` / `links` / `post_tags`，内容只存一份，三种用途复用 |
 | RAG 检索 | 中文二元组 + IDF；标题 3.0 / 小节 1.6 / 正文 1.0；`RAG_MIN_SCORE=1.0` 兜底 |
 | Agent 内核 | `agents` / `agent_memories` / `agent_relations` / `agent_sessions` / `agent_turns` / `citations` |
@@ -69,6 +69,14 @@
   sitemap / rss / 首页轮播 / 统计口径）全链路移除，6 篇原文与 `chatter` 表一并删除。
   桌宠单击让位给「唤出助手」，双击摸头仍说原来的闲话（`site.pet.lines`），
   单击话术改由新增的 `site.pet.askLines` 提供。
+- **开屏 `Splash`**（2026-10-20）：纯氛围件，首访挡 1150ms + 520ms 淡出，e2e 每次要
+  `sessionStorage.setItem` 绕过。删组件 + `layout.tsx` 引用 + `globals.css` 的 `data-splash` 规则，
+  `BOOT_INIT` 只剩主题一件事（见 §14.1）。
+- **多角色**（2026-10-20）：`agents` 原有知行 / 小满 / 砺锋三个角色，但 3 个 session 全挂
+  `agent_id=1`，也没有任何接口把角色列表交给前端 —— 小满、砺锋是小镇端下线后的死数据。
+  已单角色化：`content/town/agents.json` 只留「知行」，库中两行一并删除；
+  **三张表保留**（`agent_memories` 的 4 条记忆是知行在用的）。要恢复多角色，补 `GET /agents`
+  + 前端切换 + seed 回三个角色即可（见 §14.1）。
 
 ### 2.3 未开工 ❌
 
@@ -602,3 +610,42 @@ CODEBUDDY_SAFE_DELETE_ENABLED=0 \
 - [ ] 后台保存一篇文章后再看 `--stats`：待补 0（向量继承生效，不会因为一次编辑全站归零）
 - [ ] 浏览器实测：导航六项、桌宠在、点桌宠能唤出助手面板、控制台 0 错误
 - [ ] 推送后用 `git ls-remote origin refs/heads/main` 比对本地 HEAD（不信退出码）
+
+---
+
+## 14. 项目审计与取舍（2026-10-20）
+
+> 对路由、接口、service、组件、脚本、配置、测试、真实数据量各做了一次全量清点，再用 grill 逐条定夺。
+> **判据（用户定的）**：作品集与自用并重 —— 每个功能都要能说清「给谁看、解决什么」，说不清就砍。
+
+### 14.1 砍掉 ✅ 2026-10-20 完成
+
+| 项 | 理由 | 做法（已执行） |
+|---|---|---|
+| ✅ **开屏 `Splash`** | 纯氛围，首访挡 1150ms + 520ms 淡出（兜底 3s），e2e 每次要 `sessionStorage` 绕过 | 删 `Splash.tsx`、`layout.tsx` 的 import 与引用、`BOOT_INIT` 里的 splash 分支、`globals.css` 的 `data-splash` 规则 |
+| ✅ **多角色** | `agents` 3 个角色（知行/小满/砺锋），但 3 个 session **全部 `agent_id=1`**；没有接口把角色列表给前端，也没有切换 UI —— 小满/砺锋是 Godot 小镇端下线后的残留 | 单角色化：`content/town/agents.json` 只留「知行」（seed 按 slug upsert，不会再塞回来）+ 删库中两行；**三张表（agents / agent_memories / agent_relations）保留**，`agent_memories` 4 条是知行在用的记忆机制。若要恢复多角色：补 `GET /agents` + 前端切换 + seed 三个角色即可 |
+
+### 14.2 补齐（缺口，按优先级）
+
+| 优先级 | 缺口 | 证据 | 方案 |
+|---|---|---|---|
+| P5-1 | **自动总结没有生成入口** | §12 技术债 7「工具未建」；`summary` 只能手填（`init_db.py:148` 读 frontmatter / 编辑器输入框） | 保存时**确定性抽取**（首段 + 一级小节标题，纯函数 <1ms、可单测）+ 后台「AI 重写摘要」按钮复用 `services/clipping.py:253 summarize()`（异步、可覆盖）。**不把 LLM 放进保存路径**：会阻塞 2–10s，且 Mock 占位摘要入库后不会自动刷新 |
+| P5-2 | **AI 助手入口只有桌宠** | `MingyuePet.tsx:141` 是全仓唯一 `OPEN_ASSISTANT_EVENT` 派发点；导航栏无按钮 | 导航栏加常驻「问 AI」按钮（复用同一事件，约 10 行），桌宠降为趣味入口 |
+| P5-3 | **前端零测试 + e2e 在仓库外** | `src/` 无 `*.test.*`；P4 三条验收基线未脚本化 | `e2e/smoke.mjs` 三条冒烟：首页三区块在 / `/posts/不存在` 软 404 / 未登录访问 `/admin` 跳登录。不依赖 LLM。配 `npm run e2e` |
+| P5-4 | 访客意图只有原始日志 | `agent_turns` 170 轮、`citations` 282 条，`/admin/logs` 只按时间线平铺 | 只读聚合：高频问题 Top N + 零引用问题 + 按意图分组；再谈「问→答→补文档」闭环 |
+| P5-5 | Ollama 停掉后检索静默变弱 | `embedding.ready()` 为假时自动退回关键词，界面无提示 | 助手面板显示当前检索档位（关键词 / 混合），`/api/health` 已有 `embedding.describe()` |
+| P5-6 | 编辑器无预览 / 无图片上传 | 正文仍是纯 textarea（路线图 3） | 有 Markdown 管线可复用，但优先级低于上面几条 |
+
+### 14.3 保留（看着像冗余，其实不是）
+
+- **弹幕 `Danmaku`**：8 条固定短句，`pointer-events-none` 不挡交互，成本极小 → 留作氛围。
+- **桌宠**：pixi 已动态 import 不进首屏，864K 素材；已知 hover 三帧 12% 居中偏差（素材问题，非代码）。
+- **友链整套**：只有 3 条数据，但页面 + 后台 + 3 个接口都已跑通，砍它只省概念不省维护。
+- **`scripts/clip.py`**：流程已 Web 化，96 行 CLI 作备用入口，成本可忽略。
+- **`hash` provider**：无 LLM 时的检索兜底 + 单测夹具，有明确存在理由。
+- **`projects` 编译期常量**：属「伪后台」（改项目要改代码再 build），但把 10 个项目搬进库不划算。
+
+### 14.4 已顺手修正
+
+- README 三处仍在描述已删除的首页卡片：L25 卡片墙清单、L77 路由表、L125 目录树里的 `HomeCards.tsx`。
+

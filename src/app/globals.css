@@ -76,11 +76,6 @@ body {
   color: rgb(var(--ink-text));
 }
 
-/* 同一会话内已看过开屏：layout 的内联脚本在首次绘制前打上标记，连第一帧都不闪 */
-html[data-splash='seen'] .splash {
-  display: none;
-}
-
 /* 细滚动条，融入双主题 */
 * {
   scrollbar-width: thin;

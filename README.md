@@ -22,7 +22,7 @@ npm install
 npm run dev                   # http://localhost:3000
 ```
 
-首页是卡片墙：资料卡 + 最新文章轮播 + 主题导览 + GitHub 贡献热力图 + 状态/主题/说说卡。
+首页是卡片墙：资料卡 + 最新文章轮播 + 主题导览 + GitHub 贡献热力图。
 顶部导航在「归档 / 项目 / 说说 / 友链 / 关于」之间切换，`/blog` 旧地址仍会 308 跳新地址。
 
 零外部服务依赖：不需要 Docker、不需要装数据库服务器、不需要任何 API Key。
@@ -74,7 +74,7 @@ URL 唯一，重复收藏原地更新。收藏稿落在
 
 | 路由 | 内容 |
 |---|---|
-| `/` | 首页：资料卡 + 最新文章轮播 + 主题导览（全站索引入口 + 分类导航）+ GitHub 热力图 + 状态/说说 |
+| `/` | 首页：资料卡 + 最新文章轮播 + 主题导览（全站索引入口 + 分类导航）+ GitHub 热力图 |
 | `/timeline` | 归档与探索：搜索 + 主题 + 标签 + 双视图（中枢链路 / 矩阵网格） |
 | `/posts/[slug]` | 文章详情：封顶封面、目录、代码高亮、灯箱、上下篇、相关文章、出链/反链 |
 | `/projects` | 项目矩阵：搜索 + 技术栈胶囊 + 外链 |
@@ -121,8 +121,7 @@ src/                       前端（Next.js App Router）
     CodeCopy.tsx        代码块的语言标签 / 复制 / 行号
     Lightbox.tsx        图片灯箱（事件委托，文章与说说复用）
     TimelineControls.tsx / ProjectsBoard.tsx / MomentsBoard.tsx
-    SiteHeader.tsx / SiteFooter.tsx / Splash.tsx / Danmaku.tsx / PageHeader.tsx
-    HomeCards.tsx       首页状态卡与主题卡
+    SiteHeader.tsx / SiteFooter.tsx / Danmaku.tsx / PageHeader.tsx
 server/                   后端（FastAPI + SQLAlchemy）
   app/
     main.py           FastAPI 入口：CORS、lifespan 建表、路由注册
