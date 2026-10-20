@@ -112,17 +112,26 @@ export const adminListPosts = (q = '') =>
 export const adminGetPost = (slug: string) =>
   request<AdminPost>(`/posts/${encodeURIComponent(slug)}`);
 
+/** 保存回执。摘要留空时后端会兜底抽取，`summaryGenerated` 为真表示这句是自动来的。 */
+export type AdminSaveResult = {
+  ok: boolean;
+  slug: string;
+  sourcePath: string;
+  summary: string;
+  summaryGenerated: boolean;
+};
+
 export const adminCreatePost = (input: AdminPostInput) =>
-  request<{ ok: boolean; slug: string; sourcePath: string }>('/posts', {
+  request<AdminSaveResult>('/posts', {
     method: 'POST',
     body: JSON.stringify(input),
   });
 
 export const adminUpdatePost = (slug: string, input: AdminPostInput) =>
-  request<{ ok: boolean; slug: string; sourcePath: string }>(
-    `/posts/${encodeURIComponent(slug)}`,
-    { method: 'PUT', body: JSON.stringify(input) },
-  );
+  request<AdminSaveResult>(`/posts/${encodeURIComponent(slug)}`, {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  });
 
 export const adminDeletePost = (slug: string) =>
   request<{ ok: boolean }>(`/posts/${encodeURIComponent(slug)}`, { method: 'DELETE' });

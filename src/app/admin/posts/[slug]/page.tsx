@@ -62,12 +62,19 @@ export default function AdminEditorPage() {
   // 新建成功后要跳到真实 slug，那次跳转会把组件重挂、state 清空，
   // 所以回执另挂一份在 URL 上带过来。抹参数用浏览器原生 API：
   // 走 router 会再重挂一次，刚拿到的回执又没了。
+  // 依赖 slug：新建保存后是 `router.replace` 到同一路由段的另一个参数，**组件不会重挂**，
+  // 空依赖的 effect 不会重跑 —— 表现就是回执既不显示、URL 上的 `?saved=1` 也清不掉。
   useEffect(() => {
     const flags = new URLSearchParams(window.location.search);
     if (!flags.has('saved')) return;
-    setNotice('已保存到 Vault，索引已重建');
+    // 「摘要是自动来的」也挂在 URL 上带过来，这里一起说清
+    setNotice(
+      flags.get('summary') === 'auto'
+        ? '已保存到 Vault，摘要留空已自动抽取，索引已重建'
+        : '已保存到 Vault，索引已重建',
+    );
     window.history.replaceState(null, '', window.location.pathname);
-  }, []);
+  }, [slug]);
 
   useEffect(() => {
     if (isNew) {
@@ -158,8 +165,17 @@ export default function AdminEditorPage() {
         ? await adminCreatePost(payload)
         : await adminUpdatePost(slug, payload);
       setSourcePath(result.sourcePath);
+      // 摘要留空时后端兜了一句并写进 frontmatter —— 回填输入框，否则界面上看着还是空的，
+      // 下次再保存又会重新抽一遍（内容虽一样，但作者会以为「没生效」）
+      if (result.summaryGenerated && result.summary) {
+        patch({ summary: result.summary });
+        setSummaryNote('摘要留空，保存时已自动从正文抽取并写入');
+      }
       setNotice(`已保存到 ${result.sourcePath}，索引已重建`);
-      if (isNew) router.replace(`/admin/posts/${encodeURIComponent(result.slug)}?saved=1`);
+      if (isNew) {
+        const auto = result.summaryGenerated ? '&summary=auto' : '';
+        router.replace(`/admin/posts/${encodeURIComponent(result.slug)}?saved=1${auto}`);
+      }
     } catch (err) {
       setError(err instanceof AdminError ? err.message : String(err));
     } finally {
