@@ -10,13 +10,14 @@
  *   2. /posts/<不存在> 是**软 404**：HTTP 404 + 「这条街没有这栋楼」，不能是 500
  *   3. 未登录访问 /admin/* 会被闸门 replace 到 /admin/login，且不泄漏侧栏
  *   4. 文章页的助手有「只搜当前这篇」，首页没有
- *   5. 导航里的「图谱」能进 /graph，且画出来的节点数与 /api/graph 一致
+ *   5. 导航里的「图谱」能进 /graph，画出来的节点数与 /api/graph 一致，且 WebGL 画布真有像素
  *   6. 收藏稿的 `> [!tip]` 渲染成 callout 卡片，页面上不留字面残留
  *
  * 第 4 条是补漏出来的：`articleSlug` 的正则一直写着 `^/blog/(.+)$`，而路由早就是
  * `/posts/[slug]` —— 于是这个开关在文章页**从来没渲染过**，也没有任何报错。
  * 这类「路由改了、跟着它的字符串没改」的失效，只有 e2e 看得见。
  * 第 5 条同理：`/api/graph` 与 `getGraph()` 曾经长时间零调用，接口在、页面不在。
+ * 这一条现在还负责盯住「画布空转」——见 §21，节点数对、像素全透明的那种。
  *
  * 依赖：前端 `next start`（:3401）与后端（:8000）都要在跑。脚本先探活，
  * 服务没起时直接给「先起服务」的提示，而不是抛一个看不懂的超时。
@@ -272,7 +273,38 @@ async function caseGraphPage(page) {
     throw new Error(`图上 ${count} 个节点，接口 ${expected} 个（渲染层与数据层对不上）`);
   }
 
-  return `${count} 个节点 · ${data.edges.length} 条连线`;
+  // 节点数对得上，不代表画布上真有东西：three.js 那条路曾经「45 次 draw call、0 个像素」
+  // 地空转了一整轮（扁平面朝向被投影翻转当背面剔掉）。所以再数一次真实像素。
+  // 先给画布一点时间挂上来（动态 import + WebGL 探测约 200ms），等不到才认「SVG 兜底」。
+  await page
+    .locator('canvas.block')
+    .first()
+    .waitFor({ state: 'visible', timeout: 3000 })
+    .catch(() => {});
+  const painted = await page.evaluate(
+    () =>
+      new Promise((resolve) => {
+        const canvas = document.querySelector('canvas.block');
+        const gl = canvas?.getContext('webgl2');
+        if (!canvas || !gl) return resolve(-1); // 没有 WebGL 就走 SVG 兜底，不算失败
+        const px = new Uint8Array(canvas.width * canvas.height * 4);
+        let tries = 0;
+        const tick = () => {
+          gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, px);
+          let opaque = 0;
+          for (let i = 3; i < px.length; i += 4) if (px[i] > 8) opaque += 1;
+          tries += 1;
+          if (opaque > 1000 || tries > 60) resolve(opaque);
+          else requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      }),
+  );
+  if (painted !== -1 && painted < 1000) {
+    throw new Error(`画布在，但只有 ${painted} 个不透明像素（WebGL 层在空转）`);
+  }
+
+  return `${count} 个节点 · ${data.edges.length} 条连线 · ${painted === -1 ? 'SVG 兜底' : `${painted} 个像素`}`;
 }
 
 async function caseCallout(page) {

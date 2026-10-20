@@ -65,7 +65,7 @@ cd server && VAULT_DIR="/path/to/your/vault" python -m scripts.init_db
 | `cd server && python -m pytest` | 后端纯函数单测（不连库不发请求，数秒跑完；先装 `requirements-dev.txt`） |
 | `cd server && python -m scripts.embed_chunks` | 补向量（幂等）；`--rebuild` 全量重算，`--stats` 只看现状 |
 | `cd server && python -m scripts.eval_retrieval` | 检索评估：关键词 vs 混合的位次 / hit@4 / MRR |
-| `npm run e2e` | 六条冒烟：首页三区块 / 软 404 / 未登录后台跳登录 / 文章页才有「只搜本文」/ 图谱页节点数与接口一致 / 收藏稿 callout 已渲染（需前后端都在跑，用系统 Edge） |
+| `npm run e2e` | 六条冒烟：首页三区块 / 软 404 / 未登录后台跳登录 / 文章页才有「只搜本文」/ 图谱页节点数与接口一致且画布真有像素 / 收藏稿 callout 已渲染（需前后端都在跑，用系统 Edge） |
 
 微信收藏 → 知识库（收件箱管道：浏览器打开文章 → 复制链接，其余全自动）。
 两个入口同一份实现（`server/app/services/clipping.py`）：CLI 是 `python -m scripts.clip <url>`
@@ -164,7 +164,7 @@ content/
   town/agents.json   角色设定（人格、口吻），博客助手也在这里
 e2e/
   smoke.mjs          六条冒烟：首页三区块 / 软 404 / 未登录后台跳登录 / 文章页的「只搜本文」
-                     / 图谱页节点数与接口一致 / 收藏稿 callout 已渲染
+                     / 图谱页节点数与接口一致 + 画布真有像素 / 收藏稿 callout 已渲染
                      （不碰 LLM；浏览器用系统 Edge，不下载 Chromium）
 docs/
   DESIGN.md          设计与实现说明：架构取舍、检索标定、素材规格、配置与构建注意事项
@@ -195,7 +195,7 @@ public/
 - **纯图文章**（公众号正文全在截图里）去图后不足 200 字即不进检索，命中时提示去看原文 PDF。
   候选方向：OCR 抽字 / 视觉模型描述图片 / 干脆不索引。
 - **前端只有六条冒烟**：`npm run e2e` 盯住「首页三区块 / 软 404 / 后台跳登录 / 文章页的只搜本文 /
-  图谱页节点数 / 收藏稿 callout」——这是整体崩掉最丢人的路径，不是覆盖率。
+  图谱页节点数与画布像素 / 收藏稿 callout」——这是整体崩掉最丢人的路径，不是覆盖率。
   助手问答、编辑器、收藏这类交互仍靠临时脚本，没有固化。
 - **桌宠素材对齐**：`hover` 三帧水平中心差 12% 帧宽、`pet_head` 的手臂被左边缘切出平口，
   都要重跑生图，代码补不了。
