@@ -14,7 +14,7 @@ import math
 
 import pytest
 
-from app.services.agent_chat import _score_chunk
+from app.services.agent_chat import RAG_MIN_SCORE, _score_chunk, citations_within_gate
 from scripts.init_db import CHUNK_SOFT_LIMIT, split_chunks
 
 LOG2 = math.log(2)
@@ -146,3 +146,38 @@ class TestSplitChunks:
     def test_backtick_fence_with_language_tag(self):
         md = "# 一\n\n```js\n# not a heading\n```\n"
         assert len(split_chunks(md)) == 1
+
+
+class TestCitationGate:
+    """「检索到了」不等于「答得出」。
+
+    这层闸门是撞出来的：闲聊问「今天天气怎么样」，模型调了检索工具，`box.citations`
+    攒下 4 条段落（0.388~0.777），正文写着「没有找到相关内容」，界面却在下面列了 4 篇出处。
+    读者的结论只能是出处是装饰品。
+
+    整组丢而不是逐条过滤，是因为引用序号按 `register` 的追加顺序发，正文的 [n] 按它对；
+    中间抽一条会让后面的标号整体错位，点开的是另一段原文。所以这里也钉住「不逐条过滤」。
+    """
+
+    @staticmethod
+    def _rows(*scores: float) -> list[dict]:
+        return [{"score": s, "chunk_id": i} for i, s in enumerate(scores)]
+
+    def test_empty_stays_empty(self):
+        assert citations_within_gate([]) == []
+
+    def test_all_below_gate_are_dropped(self):
+        # 实测闲聊那 4 条就在这一段区间里
+        assert citations_within_gate(self._rows(0.777, 0.388, 0.388, 0.388)) == []
+
+    def test_single_weak_hit_is_dropped(self):
+        assert citations_within_gate(self._rows(0.57)) == []
+
+    def test_exactly_on_the_gate_survives(self):
+        # 边界是 >=：分数恰好等于阈值算命中，别写成 > 让标定值失效
+        assert len(citations_within_gate(self._rows(RAG_MIN_SCORE))) == 1
+
+    def test_one_strong_hit_keeps_the_whole_group(self):
+        # 不逐条过滤：宁可多带几条同篇的低分段落，也不能让正文 [n] 错位
+        rows = self._rows(2.1, 0.4, 0.3)
+        assert citations_within_gate(rows) == rows

@@ -420,8 +420,10 @@ export function BlogAssistant() {
   }, [open, refreshHealth]);
 
   // 只有文章详情页才谈得上「只搜本文」
+  // 曾经写的是 ^/blog/(.+)$，而路由早就是 /posts/[slug] —— 于是这个开关在文章页永远不出现，
+  // 「只搜本文」等于从来没生效过。slug 只有一段，别用 (.+) 把 /posts/a/b 也吞进来。
   const articleSlug = (() => {
-    const match = /^\/blog\/(.+)$/.exec(pathname);
+    const match = /^\/posts\/([^/]+)\/?$/.exec(pathname);
     return match ? decodeURIComponent(match[1]) : null;
   })();
   const scopeToArticle = articleSlug !== null && scoped;

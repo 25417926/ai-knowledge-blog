@@ -1,14 +1,19 @@
 #!/usr/bin/env node
 /**
- * 三条冒烟 e2e（EXECUTION_PLAN §14.2 P5-3）。
+ * 四条冒烟 e2e（EXECUTION_PLAN §14.2 P5-3、§18）。
  *
- * 为什么只有三条：`src/` 到这一轮为止没有任何前端测试，这里补的是**最容易整体崩掉、
- * 崩了最丢人**的三条路径，不是覆盖率。三条都刻意不碰 LLM——一次问答要等本机模型
+ * 为什么只有四条：`src/` 到这一轮为止没有任何前端测试，这里补的是**最容易整体崩掉、
+ * 崩了最丢人**的路径，不是覆盖率。四条都刻意不碰 LLM——一次问答要等本机模型
  * 十几秒，把它塞进冒烟会让「跑一下看看」变成没人愿意跑的东西。
  *
  *   1. 首页三区块都在（博主资料 / 最新文章 / 主题导览），且文章数据是通的
  *   2. /posts/<不存在> 是**软 404**：HTTP 404 + 「这条街没有这栋楼」，不能是 500
  *   3. 未登录访问 /admin/* 会被闸门 replace 到 /admin/login，且不泄漏侧栏
+ *   4. 文章页的助手有「只搜当前这篇」，首页没有
+ *
+ * 第 4 条是补漏出来的：`articleSlug` 的正则一直写着 `^/blog/(.+)$`，而路由早就是
+ * `/posts/[slug]` —— 于是这个开关在文章页**从来没渲染过**，也没有任何报错。
+ * 这类「路由改了、跟着它的字符串没改」的失效，只有 e2e 看得见。
  *
  * 依赖：前端 `next start`（:3401）与后端（:8000）都要在跑。脚本先探活，
  * 服务没起时直接给「先起服务」的提示，而不是抛一个看不懂的超时。
@@ -195,6 +200,53 @@ async function caseAdminGate(page) {
   return `replace 到 ${new URL(page.url()).pathname}`;
 }
 
+/**
+ * 打开助手面板。
+ *
+ * 面板靠一个 window 自定义事件打开（桌宠与导航都用它），但**事件派发早于 hydration
+ * 就等于打给没人听的电话**——面板不会开，也不报错。所以轮询重发，直到真的可见；
+ * 真开不起来时给一句人话，而不是一句 locator 超时。
+ */
+async function openAssistant(page) {
+  const panel = page.locator('section[aria-label="博客助手"]').first();
+  for (let i = 0; i < 20; i += 1) {
+    if ((await panel.count()) > 0 && (await panel.isVisible())) return panel;
+    await page.evaluate(() => window.dispatchEvent(new Event('blog-assistant:open')));
+    await page.waitForTimeout(300);
+  }
+  throw new Error('助手面板打不开：派发 blog-assistant:open 后仍不可见');
+}
+
+async function caseScopedAsk(page) {
+  // 幂等：这条要读首页的文章链接，别依赖上一条用例把页面留在哪儿
+  await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
+
+  // slug 从首页现取：文章会变，写死的话这条会先因为「文章没了」而红，掩盖真正要盯的东西
+  const href = await page.getAttribute(
+    'section[aria-label="最新文章"] a[href^="/posts/"]',
+    'href',
+  );
+  if (!href) throw new Error('首页拿不到文章链接，没法进文章页');
+
+  await page.goto(`${BASE}${href}`, { waitUntil: 'domcontentloaded' });
+  const panel = await openAssistant(page);
+
+  // 面板里唯一的范围开关：文案会随状态在两种之间翻转
+  const toggle = panel.getByRole('button', { name: /只搜当前这篇|搜索全部文章/ });
+  await toggle.waitFor({ state: 'visible', timeout: TIMEOUT });
+  const label = (await toggle.textContent())?.trim();
+
+  // 反向：首页不该有。正则要是写成 `/(.+)$` 这种什么都匹配的，这里才会红
+  await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
+  const homePanel = await openAssistant(page);
+  const onHome = await homePanel
+    .getByRole('button', { name: /只搜当前这篇|搜索全部文章/ })
+    .count();
+  if (onHome > 0) throw new Error('首页也出现了「只搜本文」开关');
+
+  return `文章页有「${label}」，首页没有`;
+}
+
 async function main() {
   console.log(`\nsmoke e2e \u2192 ${BASE}（${CHANNEL}）\n`);
 
@@ -222,6 +274,7 @@ async function main() {
   watch(page);
 
   await step('首页三区块 + 数据通路', () => caseHome(page));
+  await step('文章页才有「只搜本文」', () => caseScopedAsk(page));
   await step('不存在的文章走软 404', () => caseSoft404(page));
   await step('未登录访问后台跳登录', () => caseAdminGate(page));
 

@@ -65,6 +65,23 @@ RAG_MIN_SCORE = 1.0
 VEC_WEIGHT = 10.0
 VEC_FLOOR = 0.15
 
+
+def citations_within_gate(citations: list[dict]) -> list[dict]:
+    """只有过了闸门的才配当「出处」。
+
+    检索到的东西会全部进 `box.citations`（模型调了几次工具就攒几条），但「检索到了」
+    不等于「答得出」：闲聊时分数只有 0.388~0.777，正文明明在说「没有找到相关内容」，
+    下面却整整齐齐列着 4 篇——读者只能理解为这套出处是装饰品。
+    判据与 `RAG_MIN_SCORE` 同源，全项目只在这里判一次。
+
+    **刻意整组丢，不逐条过滤。** 引用序号是 `register` 时按追加顺序发的，正文里的 [n]
+    就按它对；中间抽掉一条会让后面的标号整体错位，读者点开的是另一段原文。
+    整组丢没这个问题——要么可信，要么干脆不给。
+    """
+    if not citations:
+        return []
+    return citations if max(c["score"] for c in citations) >= RAG_MIN_SCORE else []
+
 # 语料均值缓存：签名 = provider + model + 块数 + 最大块 id。
 # 导入新文章、后台改稿都会让签名变，旧的自动不再命中；平时一次提问零开销。
 _CENTROID_CACHE: dict[tuple, list[float]] = {}
@@ -1080,7 +1097,9 @@ async def _run_tool_agent(
         else:
             reply = no_hit_message(input.message)
 
-    return reply, model, box.citations, box.trace, box.remembered
+    # 检索基本没命中时，答案本身就在说「没找到」——此时再把那几条低分段落当出处
+    # 挂出去就是自相矛盾（判据与原因见 citations_within_gate）。
+    return reply, model, citations_within_gate(box.citations), box.trace, box.remembered
 
 
 # ────────────────────────────────────────────── 对外入口
@@ -1179,11 +1198,13 @@ async def talk(
         about = input.about
         overview = input.rag and about is not None and is_overview_ask(message)
         if input.rag:
-            citations = (
-                await article_overview(session, about, 3)
-                if overview and about
-                else await retrieve(session, message, 4, about)
-            )
+            if overview and about:
+                citations = await article_overview(session, about, 3)
+            else:
+                citations = await retrieve(session, message, 4, about)
+                # 与 LLM 路径同一判据：弱命中就当没找到，别把低分段落贴成「最贴近的是…」。
+                # overview 不适用——它是按文章取段落，分数本来就不由查询决定。
+                citations = citations_within_gate(citations)
         reply, model, is_mock = await _generate_reply(ctx, input, citations, overview)
         if emit is not None:
             await _typewriter(reply, emit)
