@@ -1,7 +1,6 @@
 import Link from 'next/link';
 import { Carousel, type CarouselItem } from '@/components/Carousel';
 import { GitHubHeatmap } from '@/components/GitHubHeatmap';
-import { StatusCard, ThemeCard } from '@/components/HomeCards';
 import { TopicGuide } from '@/components/TopicGuide';
 import { coverVars } from '@/lib/cover';
 import { getGithubHeatmap, listCategories, listMoments, listPosts } from '@/lib/api';
@@ -30,10 +29,6 @@ export default async function HomePage() {
     summary: post.summary,
     cover: coverVars(post.category),
   }));
-
-  const photos = moments
-    .flatMap((moment) => moment.images)
-    .slice(0, 6);
 
   const stats = [
     { label: site.author.statsLabels.posts, value: posts.length },
@@ -115,43 +110,6 @@ export default async function HomePage() {
 
       {/* ── GitHub 活跃度：把「最近有没有在写」摊开给访客看 ── */}
       {heatmap ? <GitHubHeatmap data={heatmap} /> : null}
-
-      {/* ── 第三排：状态 / 主题 / 说说 ─────────────────────── */}
-      <div className="mt-10 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-        <StatusCard />
-        <ThemeCard />
-
-        <section className="card flex flex-col p-6" aria-label="说说精选">
-          <div className="flex items-baseline justify-between gap-3">
-            <p className="font-mono text-[10.5px] tracking-[0.3em] text-ink-dim">MOMENTS</p>
-            <Link href="/moments" className="text-[11.5px] text-ink-dim transition-colors hover:text-accent-ink">
-              全部说说 →
-            </Link>
-          </div>
-
-          {photos.length > 0 ? (
-            <div className="mt-4 grid grid-cols-3 gap-1.5">
-              {photos.map((src) => (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  key={src}
-                  src={src}
-                  alt=""
-                  loading="lazy"
-                  decoding="async"
-                  className="aspect-square w-full rounded-lg border border-ink-line object-cover"
-                />
-              ))}
-            </div>
-          ) : (
-            <p className="mt-4 text-[12.5px] text-ink-dim">还没有带图的说说。</p>
-          )}
-
-          <p className="mt-auto pt-4 text-[12px] text-ink-dim">
-            共 <span className="font-mono text-ink-text">{moments.length}</span> 条动态
-          </p>
-        </section>
-      </div>
     </main>
   );
 }
