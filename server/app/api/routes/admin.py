@@ -19,7 +19,7 @@ import hmac
 import json
 import os
 import time
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -30,10 +30,11 @@ from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_session
-from ...models import Clipping, Friend, Post, PostTag, Tag
+from ...models import AgentSession, AgentTurn, Citation, Clipping, Friend, Post, PostTag, Tag
 from ...services import agent_chat as svc
 from ...services import clipping as clip_svc
 from ...services import embedding_job
+from ...services import insights as insights_svc
 from ...services import summary as summary_svc
 from ...services.content import list_friends
 from scripts.init_db import PROJECT_ROOT, import_vault, to_slug
@@ -422,6 +423,123 @@ async def admin_logs(
 ) -> dict[str, Any]:
     """直接复用阅读面板那份 read_log，字段与前端历史回放逐字一致。"""
     return await svc.read_log(session, SESSION_KEY, ASSISTANT_SLUG, max(1, min(limit, 200)))
+
+
+# ── 访客意图 ──────────────────────────────────────────
+#
+# 只读聚合，不改任何一张表。取数逻辑全在这里，聚合逻辑全在 services/insights.py
+# （纯函数，有单测）。这条边界是有意的：SQL 会变，判断标准不该跟着变。
+#
+# 一个问题算不算「有引用」，看的是**它那一条回答**引了几篇 —— 所以必须把
+# user 轮和紧随其后的 assistant 轮配成对。库里只有 id 顺序可用（没有 parent_turn_id），
+# 因此按 id 升序扫一遍、用「同一会话里上一轮提问」配对，别绕开这段去写 JOIN。
+
+
+def _pairs(rows: list[Any]) -> list[tuple[Any, Any | None]]:
+    """把按 id 升序的 turn 行配成 (提问, 回答)。没有回答的提问返回 None。"""
+    pairs: list[tuple[Any, Any | None]] = []
+    pending: dict[str, Any] = {}
+    for row in rows:
+        if row.role == "user":
+            # 同一会话连续两次提问（上一轮生成失败）时，后者覆盖前者：
+            # 前一次没有回答，留着只会凭空多一条"零引用缺口"。
+            pending[row.session_id] = row
+            continue
+        ask = pending.pop(row.session_id, None)
+        if ask is not None:
+            pairs.append((ask, row))
+    for row in pending.values():
+        pairs.append((row, None))
+    return pairs
+
+
+@router.get("/admin/insights", dependencies=[Depends(require_admin)])
+async def admin_insights(
+    days: int = 0, top: int = 8, session: AsyncSession = Depends(get_session)
+) -> dict[str, Any]:
+    """访客意图：高频问题 / 零引用缺口 / 按意图分组 / 被问最多的文章。
+
+    `days=0` 表示全部历史；SQLite 的 `datetime('now')` 存的是 UTC，所以窗口也按 UTC 截。
+
+    **只统计博客助手入口的会话**：同一个 agent 名下还可能有 NPC 闲聊会话（历史遗留的
+    `librarian:town` 就是自报家门那种），把它们算进访客意图会让「内容缺口」里冒出
+    「我叫阿国」这类根本不该被回答的句子。判定用会话 key（`<slug>:<key>` 的后半段），
+    与 `ask.py` 的 `SESSION_KEY` 对齐；**一条都对不上时退回全部会话**——
+    宁可数据略脏，也不要因为 key 改名而悄悄变成一页空白。
+    """
+    agent = await svc._resolve_agent(session, ASSISTANT_SLUG)
+    agent_id = agent.id
+    entry_key = f"{agent.slug}:{SESSION_KEY}"
+    all_sessions = {
+        row[0]
+        for row in (
+            await session.execute(select(AgentSession.id).where(AgentSession.agent_id == agent_id))
+        ).all()
+    }
+    allowed = {entry_key} if entry_key in all_sessions else all_sessions
+
+    cutoff = _window_start(days) if days > 0 else ""
+    rows = (
+        await session.execute(
+            select(
+                AgentTurn.id,
+                AgentTurn.session_id,
+                AgentTurn.role,
+                AgentTurn.content,
+                AgentTurn.created_at,
+                AgentTurn.latency_ms,
+            )
+            .where(AgentTurn.agent_id == agent_id, AgentTurn.session_id.in_(allowed or {""}))
+            .order_by(AgentTurn.id)
+        )
+    ).all()
+
+    cited: dict[int, list[str]] = {}
+    for turn_id, slug in (
+        await session.execute(
+            select(Citation.turn_id, Citation.post_slug)
+            .join(AgentTurn, AgentTurn.id == Citation.turn_id)
+            .where(AgentTurn.agent_id == agent_id)
+        )
+    ).all():
+        if slug:
+            cited.setdefault(turn_id, []).append(slug)
+
+    questions: list[insights_svc.Question] = []
+    for ask, answer in _pairs(rows):
+        asked_at = insights_svc.stamp(ask.created_at)
+        if days > 0 and asked_at < cutoff:
+            continue
+        questions.append(
+            insights_svc.Question(
+                turn_id=ask.id,
+                session_id=ask.session_id,
+                text=ask.content,
+                asked_at=asked_at,
+                citations=tuple(cited.get(answer.id, ()) if answer is not None else ()),
+                latency_ms=int(getattr(answer, "latency_ms", 0) or 0) if answer is not None else 0,
+            )
+        )
+
+    slugs = {slug for q in questions for slug in q.citations}
+    titles = (
+        dict(
+            (
+                await session.execute(
+                    select(Post.slug, Post.title).where(Post.slug.in_(slugs))
+                )
+            ).all()
+        )
+        if slugs
+        else {}
+    )
+    return insights_svc.summarize(questions, titles=titles, top=max(1, min(top, 20)))
+
+
+def _window_start(days: int) -> str:
+    """`现在 - days` 的 UTC 字符串（与 `_stamp` 同格式，可直接比）。"""
+    moment = datetime.now(timezone.utc) - timedelta(days=days)
+    return moment.strftime("%Y-%m-%d %H:%M:%S")
 
 
 # ── 收藏 ──────────────────────────────────────────────

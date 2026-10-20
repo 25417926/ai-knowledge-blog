@@ -186,6 +186,58 @@ export const adminDeleteFriend = (id: number) =>
 
 export const adminLogs = (limit = 60) => request<AdminLog>(`/logs?limit=${limit}`);
 
+// ── 访客意图 ──────────────────────────────────────────
+
+export type InsightIntent = {
+  key: string;
+  label: string;
+  count: number;
+  share: number;
+  citationRate: number;
+  samples: string[];
+};
+
+export type InsightCluster = {
+  question: string;
+  intent: string;
+  intentLabel: string;
+  count: number;
+  citationRate: number;
+  lastAskedAt: string;
+  variants: string[];
+  posts: { slug: string; title: string }[];
+};
+
+export type InsightGap = {
+  question: string;
+  intent: string;
+  intentLabel: string;
+  times: number;
+  firstAskedAt: string;
+  lastAskedAt: string;
+  variants: string[];
+};
+
+export type AdminInsights = {
+  window: { questions: number; sessions: number; from: string; to: string };
+  totals: {
+    questions: number;
+    withCitation: number;
+    zeroCitation: number;
+    citationRate: number;
+    avgLatencyMs: number;
+    avgCitations: number;
+  };
+  intents: InsightIntent[];
+  clusters: InsightCluster[];
+  gaps: InsightGap[];
+  posts: { slug: string; title: string; citations: number; questions: number }[];
+};
+
+/** `days=0` 表示全部历史。聚合在后端做，前端只负责画。 */
+export const adminInsights = (days = 0) =>
+  request<AdminInsights>(`/insights?days=${days}`);
+
 // ── 收藏 ──────────────────────────────────────────────
 
 export type AdminClipping = {

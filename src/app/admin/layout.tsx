@@ -10,6 +10,7 @@ const NAV = [
   { href: '/admin/clippings', label: '收藏' },
   { href: '/admin/friends', label: '友链' },
   { href: '/admin/logs', label: '对话日志' },
+  { href: '/admin/insights', label: '访客意图' },
 ];
 
 type Gate = 'checking' | 'ok' | 'login' | 'disabled' | 'down';

@@ -8,8 +8,8 @@
 - **自动总结**：每篇文章有一句可读的摘要，参与关系网召回，也是卡片与列表的抬头。
 - **关系网查引用**：双链之外还有「相关文章」，按共同标签 / 同被一轮问答引用 / 内容重合
   算出近邻，并**把理由一起带回来**——孤立文章也有下一跳。
-- **定位访客意图**：首页主题导览给出「这里在讲什么、该从哪读」，
-  问答入口的每次提问都落库，能看到访客真正在找什么。
+- **定位访客意图**：首页主题导览给出「这里在讲什么、该从哪读」；每次提问都落库，
+  后台「访客意图」把日志压成高频问题、意图分布与**内容缺口**（问了却没出处的那几句）。
 
 ## 架构
 
@@ -77,7 +77,7 @@ cd server && VAULT_DIR="/path/to/your/vault" python -m scripts.init_db
 | `/moments` | 说说流：宫格自适应、排序切换、搜索 |
 | `/friends` | 友链：卡片墙，数据入库，由 `/admin/friends` 维护 |
 | `/about` | 关于：自我介绍、时间线、技能栈、兴趣、联系方式 |
-| `/admin` `/admin/posts` `/admin/friends` `/admin/logs` `/admin/clippings` | 后台：口令登录、文章增删改（含摘要生成）、友链增删改、收藏、对话日志（未配 `ADMIN_PASSWORD` 则整块禁用） |
+| `/admin` `/admin/posts` `/admin/friends` `/admin/logs` `/admin/insights` `/admin/clippings` | 后台：口令登录、文章增删改（含摘要生成）、友链增删改、收藏、对话日志、访客意图（未配 `ADMIN_PASSWORD` 则整块禁用） |
 | `/robots.txt` `/sitemap.xml` `/rss.xml` | 由 `app/robots.ts`、`app/sitemap.ts`、`app/rss.xml/route.ts` 生成 |
 
 ## 项目结构
@@ -92,7 +92,8 @@ src/                       前端（Next.js App Router）
     projects/        项目矩阵
     friends/         友链
     about/           关于
-    admin/           后台：layout 是认证闸门 + 侧栏，posts 列表/编辑器，friends 友链管理，logs 日志面板
+    admin/           后台：layout 是认证闸门 + 侧栏，posts 列表/编辑器，friends 友链管理，
+                     logs 日志面板，insights 访客意图（高频问题 / 缺口 / 意图分布）
     robots.ts sitemap.ts rss.xml/route.ts
     error.tsx not-found.tsx
   lib/
@@ -131,6 +132,7 @@ server/                   后端（FastAPI + SQLAlchemy）
       embedding_job.py 补向量：CLI 与两个索引重建入口共用（best-effort，失败不影响导入）
       clipping.py     收藏管道：抓取 / 摘抄 / PDF 存档 / 写笔记 / 入库建索引（CLI 与后台共用）
       summary.py      一句话摘要：确定性抽取（保存兜底）+ 模型生成/优化（编辑器按钮），两档分离
+      insights.py     访客意图聚合：意图分流 / 问题聚类 / 内容缺口，纯函数（后台 insights 页的数据源）
     api/routes/
       content.py      内容查询接口
       ask.py          博客助手问答（整包 + SSE 流式双路由）与会话回放
@@ -167,8 +169,9 @@ public/
    扫 `VEC_FLOOR` / `VEC_WEIGHT`（用闲话提问确认闸门没被撑破）→ 才改 `.env`。
    **别跳过重标**：0.15 / 10.0 是按这个模型的去均值量级量出来的，不是通用值。
    要动 `_score_chunk`，`RAG_MIN_SCORE = 1.0` 也必须一起重标。
-2. **沉淀闭环。** 把问答日志里高频但站内没有的内容，提示补写成新笔记，
-   形成「问 → 答 → 补文档」的正循环。这是三条诉求里「定位访客意图」的落点。
+2. **沉淀闭环。** 「访客意图」已经能把「问了却没出处」的问题列出来，并一键带到编辑器
+   （标题预填访客原话）；下一步是把「问 → 答 → 补文档」接成自动的：
+   补完之后回看那条缺口是否消失。
 3. **编辑器增强。** 正文现在仍是纯 textarea；补 Markdown 实时预览、代码块插入、
    图片上传，就彻底不用再手工改文件。
 

@@ -78,7 +78,10 @@ export default function AdminEditorPage() {
 
   useEffect(() => {
     if (isNew) {
-      setForm(EMPTY);
+      // 「访客意图」的缺口清单点「为它写一篇」时会带一个 `?title=`：
+      // 带过来的就是访客的原话，正好当标题；正文留空，缺的那一段要人来写。
+      const preset = new URLSearchParams(window.location.search).get('title') ?? '';
+      setForm({ ...EMPTY, title: preset });
       setTagText('');
       setSourcePath('');
       setBusy(false);
