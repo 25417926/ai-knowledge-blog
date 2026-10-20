@@ -17,6 +17,15 @@ const IDLE_MIN_MS = 3_000;
 const IDLE_MAX_MS = 8_000;
 /** 气泡停留时长 */
 const SAY_MS = 4_000;
+/**
+ * 引导气泡：等首帧真的画出来再冒（否则会「对着空气说话」），
+ * 无人理会就自己收 —— 但**不记标记**，下次开新会话还会再来一次。
+ */
+const HINT_KEY = 'cyber-town:pet-hint';
+const HINT_DELAY_MS = 1_600;
+const HINT_LIFE_MS = 20_000;
+/** 气泡宽度，位置夹取时要用 */
+const HINT_W = 232;
 
 type Mood = 'idle' | 'blink' | 'click' | 'hover' | 'head' | 'lifted' | 'walk' | 'cook' | 'eat' | 'rest';
 
@@ -83,6 +92,8 @@ export function MingyuePet() {
   const [box, setBox] = useState({ w: 90, h: PET_H });
   const [mood, setMood] = useState<Mood>('idle');
   const [line, setLine] = useState<string | null>(null);
+  /** 首访引导气泡：常驻、可点，和 line（说完就走的那句）互斥 */
+  const [hint, setHint] = useState(false);
   /** 只用来重排待机定时器：setMood('idle') 在已待机时不触发副作用 */
   const [idleTick, setIdleTick] = useState(0);
 
@@ -134,8 +145,19 @@ export function MingyuePet() {
     bubbleTimerRef.current = window.setTimeout(() => setLine(null), SAY_MS);
   }, []);
 
+  /** 收掉引导气泡：点过、关过都算「知道了」，本会话不再打扰 */
+  const dismissHint = useCallback(() => {
+    setHint(false);
+    try {
+      sessionStorage.setItem(HINT_KEY, '1');
+    } catch {
+      // 隐私模式禁了 storage：照常收掉，只是下次会话还会再问一次
+    }
+  }, []);
+
   /** 单击与键盘回车都走这里：换个表情、说一句邀请，再把助手面板叫出来 */
   const openAssistant = () => {
+    dismissHint();
     setMood('click');
     say(site.pet.askLines[Math.floor(Math.random() * site.pet.askLines.length)]);
     window.dispatchEvent(new Event(OPEN_ASSISTANT_EVENT));
@@ -146,6 +168,22 @@ export function MingyuePet() {
     setMood('head');
     say(site.pet.lines[Math.floor(Math.random() * site.pet.lines.length)]);
   };
+
+  // 首访引导：本会话第一次进来，等首帧画完再冒气泡；点过或关过就不再出现
+  useEffect(() => {
+    if (!ready) return;
+    try {
+      if (sessionStorage.getItem(HINT_KEY) === '1') return;
+    } catch {
+      // 隐私模式读不到 storage：照常显示，只是拦不住下次再来
+    }
+    const show = window.setTimeout(() => setHint(true), HINT_DELAY_MS);
+    const hide = window.setTimeout(() => setHint(false), HINT_DELAY_MS + HINT_LIFE_MS);
+    return () => {
+      window.clearTimeout(show);
+      window.clearTimeout(hide);
+    };
+  }, [ready]);
 
   // 建 Pixi 应用；卸载时连同 canvas 一起销毁
   useEffect(() => {
@@ -339,8 +377,52 @@ export function MingyuePet() {
 
   if (!mounted) return null;
 
+  // 右侧放得下就挂在右边；宠物被拖到右边时翻到左侧，别让它半个身子露在屏幕外
+  const HINT_GAP = 8;
+  const fitsRight = pos.x + box.w + HINT_GAP + HINT_W + 12 <= window.innerWidth;
+  const hintLeft = fitsRight
+    ? pos.x + box.w + HINT_GAP
+    : Math.max(8, Math.min(pos.x - HINT_W - HINT_GAP, window.innerWidth - HINT_W - 12));
+
   return (
     <>
+      {hint && !line && (
+        <div
+          role="note"
+          // 宽度必须和 HINT_W 一致，夹取位置是照它算的
+          className="pet-hint glass fixed z-40 w-[232px] rounded-2xl border border-ink-line p-3 shadow-lg"
+          style={{ left: hintLeft, bottom: pos.y + PET_H - 24 }}
+        >
+          {/* 尖角指着桌宠；翻到左边时整个翻过来，别让箭头戳向屏幕外 */}
+          <span
+            aria-hidden
+            className={`absolute bottom-6 h-2.5 w-2.5 rotate-45 border-ink-line ${
+              fitsRight ? '-left-[5px] border-b border-l' : '-right-[5px] border-r border-t'
+            }`}
+            style={{ backgroundColor: 'rgb(var(--glass-bg) / 0.96)' }}
+          />
+          <button type="button" onClick={openAssistant} className="block w-full pr-5 text-left">
+            <span className="font-mono text-[10px] tracking-[0.22em] text-ink-dim">
+              {site.pet.name}
+            </span>
+            <p className="mt-1 text-[12.5px] leading-5 text-ink-text">{site.pet.hint.text}</p>
+            <span className="mt-2 inline-flex items-center gap-1 text-[12px] font-medium text-accent-ink">
+              {site.pet.hint.cta}
+              <span aria-hidden>→</span>
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={dismissHint}
+            aria-label={site.pet.hint.close}
+            title={site.pet.hint.close}
+            className="absolute right-1.5 top-1.5 grid h-6 w-6 place-items-center rounded-lg text-[14px] leading-none text-ink-dim transition-colors hover:bg-ink-soft hover:text-ink-text"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       {line && (
         <div
           role="status"

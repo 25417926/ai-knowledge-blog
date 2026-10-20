@@ -104,6 +104,28 @@ body {
     -webkit-backdrop-filter: blur(14px) saturate(160%);
   }
 
+  /* 桌宠引导气泡：从头顶轻轻浮上来，别一出现就硬切在画面上。
+     底色比全站玻璃更实 —— 它常悬在卡片正上方，0.58 的透明度会让两层文字叠在一起。 */
+  .pet-hint {
+    background-color: rgb(var(--glass-bg) / 0.96);
+    animation: pet-hint-in 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  @keyframes pet-hint-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pet-hint {
+      animation: none;
+    }
+  }
+
   /* 卡片：hover 上浮 + 边框点亮 + 光泽扫过 */
   .card {
     position: relative;

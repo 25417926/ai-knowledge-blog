@@ -630,7 +630,7 @@ CODEBUDDY_SAFE_DELETE_ENABLED=0 \
 | 优先级 | 缺口 | 证据 | 方案 |
 |---|---|---|---|
 | ~~P5-1~~ ✅ | ~~**自动总结没有生成入口**~~ 已做（2026-10-20） | 编辑器摘要行右侧两个按钮：`从正文抽取` / `AI 生成`（已有摘要时变 `AI 优化`）；留空保存自动抽取 | `server/app/services/summary.py` + `POST /api/admin/summary` + `src/lib/admin.ts:adminSummarize`。收藏生成的笔记导语会在编辑器里标明来源，可直接改或让模型重写 |
-| P5-2 | **AI 助手入口只有桌宠** | `MingyuePet.tsx:141` 是全仓唯一 `OPEN_ASSISTANT_EVENT` 派发点；导航栏无按钮 | 导航栏加常驻「问 AI」按钮（复用同一事件，约 10 行），桌宠降为趣味入口 |
+| ~~P5-2~~ ✅ | ~~**AI 助手入口只有桌宠**~~ 已做（2026-10-20） | `MingyuePet.tsx` 是全仓唯一 `OPEN_ASSISTANT_EVENT` 派发点；导航栏无按钮 | 选了**引导气泡**而不是导航栏按钮：本会话首访时桌宠自己冒一条「想查什么？……」的气泡，整块可点、右上角可关；点过/关过写 `sessionStorage`，无人理会 20 秒自动收但不记标记。导航栏按钮**暂不做**（气泡已经解决可发现性，再加按钮会重复） |
 | P5-3 | **前端零测试 + e2e 在仓库外** | `src/` 无 `*.test.*`；P4 三条验收基线未脚本化 | `e2e/smoke.mjs` 三条冒烟：首页三区块在 / `/posts/不存在` 软 404 / 未登录访问 `/admin` 跳登录。不依赖 LLM。配 `npm run e2e` |
 | P5-4 | 访客意图只有原始日志 | `agent_turns` 170 轮、`citations` 282 条，`/admin/logs` 只按时间线平铺 | 只读聚合：高频问题 Top N + 零引用问题 + 按意图分组；再谈「问→答→补文档」闭环 |
 | P5-5 | Ollama 停掉后检索静默变弱 | `embedding.ready()` 为假时自动退回关键词，界面无提示 | 助手面板显示当前检索档位（关键词 / 混合），`/api/health` 已有 `embedding.describe()` |
