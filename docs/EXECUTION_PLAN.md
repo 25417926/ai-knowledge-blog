@@ -4,8 +4,9 @@
 > 状态标记：✅ 已完成 · 🟡 部分完成 / 有条件可用 · ❌ 未开始 · 🗑 已下线
 >
 > **本文只讲三件事：做到哪了、接下来做什么、欠了什么。**
-> 架构、目录结构、启动方式、设计取舍一律以根目录 `README.md` 为唯一出处，本文不复述——
-> 同一件事写两份，必然有一份先烂，这正是本文上一版出问题的原因。
+> 项目是什么、怎么跑、目录结构以根目录 `README.md` 为唯一出处；
+> 设计取舍与实现细节以同目录 `DESIGN.md` 为唯一出处（2026-10-20 从 README 拆出）。
+> 本文不复述——同一件事写两份，必然有一份先烂，这正是本文上一版出问题的原因。
 > 同目录 `BLOG_REPLICA_PLAN.md` 是「内容站 1:1 复刻」阶段的定档留档，已停更，不作行动依据。
 
 ---
@@ -292,9 +293,9 @@ value 里实打实的 `\n`，`(.*)$` 整体匹配失败且静默；② **先清�
 （`data-splash` 才会是 `seen`），否则目检看到的永远是浮层。
 
 **验收用例依赖一篇测试稿**：孤立文章这条用例用的是
-`content/sample-vault/clippings/clip-4-more-control-flow-tools.md`——它正是 README
-「清理测试稿」待办里那篇。真删了它，孤立文章就只剩《周刊》，`related-api-verify.js`
-里那条用例要相应改（脚本会以 404 直接失败，不会静默放过）。
+`content/sample-vault/clippings/clip-4-more-control-flow-tools.md`——它正是 §11「P6 清理测试稿」
+待办里那篇。真删了它，孤立文章就只剩《周刊》，`related-api-verify.js` 里那条用例要相应改
+（脚本会以 404 直接失败，不会静默放过）。
 
 ---
 
@@ -551,6 +552,16 @@ CLI `embed_chunks` 也改成调用同一份 `plan()` / `fill()`，三个入口�
 
 **验收**：`pytest` 全绿（当前 209 passed）；e2e 可用 `playwright-core` + `channel: 'msedge'`（系统 Edge，不下载 Chromium）。
 
+### P6 · 清理测试稿 ❌ 未做
+
+原在 README「待办」里，2026-10-20 README 改为项目简介后迁到本文。
+
+`content/sample-vault/clippings/clip-4-more-control-flow-tools.md` 是验证 PDF 版式时的 Python 教程稿。
+确认后按三步删除：删文件 → `DELETE FROM posts WHERE slug LIKE 'clip-4%'` → 重跑 `init_db`。
+
+**注意**：§8 的「孤立文章」验收用例用的正是这篇。真删了它，孤立文章只剩《周刊》，
+`related-api-verify.js` 那条用例要跟着改（脚本会以 404 直接失败，不会静默放过）。
+
 ---
 
 ## 12. 技术债
@@ -647,5 +658,8 @@ CODEBUDDY_SAFE_DELETE_ENABLED=0 \
 
 ### 14.4 已顺手修正
 
-- README 三处仍在描述已删除的首页卡片：L25 卡片墙清单、L77 路由表、L125 目录树里的 `HomeCards.tsx`。
+- README 三处仍在描述已删除的首页卡片：卡片墙清单、路由表、目录树里的 `HomeCards.tsx`。
+- **README 定位回调（2026-10-20）**：从「项目进度介绍」改回「项目简介」，只留
+  简介 / 快速开始 / 路由 / 目录结构 / 后续发展；设计要点与素材规格整体拆到 `docs/DESIGN.md`，
+  阶段进度与待办归本文（`清理测试稿` 因此迁进 §11 P6）。
 
