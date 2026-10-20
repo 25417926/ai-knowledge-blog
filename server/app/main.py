@@ -69,5 +69,6 @@ app.include_router(admin.router, prefix="/api", tags=["admin"])
 
 @app.get("/api/health")
 async def health() -> dict:
-    # embedding 一起报出来：调「混合检索怎么没生效」时先看这里，别去翻代码
-    return {"status": "ok", "embedding": embedding.describe()}
+    # embedding 一起报出来：调「混合检索怎么没生效」时先看这里，别去翻代码。
+    # 用 status() 而不是 describe()：describe 只说配置，status 会真探一次对面在不在
+    return {"status": "ok", "embedding": await embedding.status()}

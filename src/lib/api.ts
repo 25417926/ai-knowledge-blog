@@ -178,3 +178,36 @@ export async function getGithubHeatmap() {
 // ── 博客助手（客户端直连 Python 端） ──────────────────
 
 export const ASK_BASE = `${API_BASE}/api/ask`;
+
+/**
+ * 检索档位：`ready` 只说配置对不对，`mode` 才是「现在到底有没有在用语义」。
+ *
+ * 起因是实测撞出来的：Ollama 停掉后 `ready` 仍然为 true，检索每次失败、
+ * 静默退回关键词——答案变差而界面毫无变化。所以后端会真探一次对面在不在，
+ * 这里把它翻成两档给面板用。
+ */
+export type RetrievalHealth = {
+  provider: string;
+  model: string;
+  dim: number;
+  /** 配置层：地址与模型名都在就算 true，不代表对面活着 */
+  ready: boolean;
+  /** 真探测结果；null = 这个 provider 本来就不用网络（none / hash） */
+  reachable: boolean | null;
+  mode: 'hybrid' | 'keyword';
+  /** 为什么不是 hybrid：没配 / 只是字面哈希 / 配了但连不上 */
+  reason: '' | 'off' | 'hash' | 'unreachable';
+};
+
+/**
+ * 走同源 `/api`（next rewrite）而不是 `API_BASE`：部署时后端不一定对浏览器开放，
+ * 而这条只读接口没有 cookie 需求，跟站内其它公开数据走同一条路更稳。
+ */
+export async function getRetrievalHealth(): Promise<RetrievalHealth> {
+  const res = await fetch('/api/health', { cache: 'no-store' });
+  if (!res.ok) {
+    throw new ApiError('/api/health', res.status, (await res.text()).slice(0, 200));
+  }
+  const data = (await res.json()) as { embedding: RetrievalHealth };
+  return data.embedding;
+}

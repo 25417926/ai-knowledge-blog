@@ -28,6 +28,7 @@ import logging
 import math
 import re
 import struct
+import time
 from collections import OrderedDict
 
 import httpx
@@ -128,6 +129,87 @@ def describe() -> dict:
         "dim": dim(),
         "ready": ready(),
     }
+
+
+# ── HTTP 客户端 ────────────────────────────────────────
+
+
+def _is_local(url: str) -> bool:
+    host = httpx.URL(url).host or ""
+    return host in ("127.0.0.1", "localhost", "::1", "0.0.0.0")
+
+
+def _client(timeout: float) -> httpx.AsyncClient:
+    """本机服务不走系统代理。
+
+    这台机器上 `HTTP_PROXY` 是设着的（`NO_PROXY` 为空），httpx 默认会把
+    `127.0.0.1:11434` 也交给代理；代理不认这个端口时返回 502，于是
+    「配置全对、模型也在跑」却每次都退回关键词——日志里只有一行 warning，
+    这是最难查的一类。远程 embedding 服务仍然走代理，那才是代理该管的事。
+    """
+    return httpx.AsyncClient(timeout=timeout, trust_env=not _is_local(EMBEDDING_BASE_URL))
+
+
+# ── 运行状态：给人看的那一层 ────────────────────────────
+#
+# ready() 只回答「配置对不对」，回答不了「对面还活着」。Ollama 停掉之后 base_url
+# 与模型名都还在，ready() 照样是 True，而 embed_query 每次都失败、静默退回关键词——
+# 界面什么都不变，只是答案悄悄变差。这正是要补的那一块。
+#
+# 探测只服务 /api/health 与助手面板，不参与打分：把「能不能用」和「怎么算分」
+# 分开，换模型、调阈值时不至于互相牵动。
+#
+# 30 秒缓存：health 会被页面反复拉，没必要每次都打 Ollama；而 30 秒的滞后，
+# 对「排查为什么这两句答得不准」完全够用。
+
+_PROBE_TTL = 30.0
+_probe: tuple[float, bool] | None = None
+
+
+async def probe(timeout: float = 1.5) -> bool | None:
+    """真的问一次 `/models`。
+
+    返回 `None` 表示这个 provider 本来就不用网络（none / hash），**不是「未知」**——
+    别让界面去猜一个永远为空的状态。
+    """
+    global _probe
+    if EMBEDDING_PROVIDER != PROVIDER_OPENAI:
+        return None
+    now = time.monotonic()
+    if _probe is not None and now - _probe[0] < _PROBE_TTL:
+        return _probe[1]
+
+    headers = {"Authorization": f"Bearer {EMBEDDING_API_KEY}"} if EMBEDDING_API_KEY else {}
+    url = f"{EMBEDDING_BASE_URL.rstrip('/')}/models"
+    try:
+        async with _client(timeout) as client:
+            res = await client.get(url, headers=headers)
+        # 非 2xx 也算不可用：401 是 key 配错，与「没启动」对打分是一样的后果
+        alive = res.is_success
+    except Exception as exc:  # 连不上 / 超时 / DNS 挂了都归到这里
+        log.debug("探测向量服务失败：%s", exc)
+        alive = False
+    _probe = (now, alive)
+    return alive
+
+
+async def status() -> dict:
+    """`describe()` 再加「这一档现在到底有没有在用」，给界面用。
+
+    `mode` 只有两档（hybrid / keyword），`reason` 说明为什么不是混合：
+    off 没配、hash 只是字面近邻、unreachable 配了但连不上。界面只需要两档，
+    排查却必须知道是哪一种——「没配」和「连不上」的处理方式完全不同。
+    """
+    alive = await probe()
+    if EMBEDDING_PROVIDER == PROVIDER_NONE:
+        mode, reason = "keyword", "off"
+    elif EMBEDDING_PROVIDER == PROVIDER_HASH:
+        mode, reason = "keyword", "hash"
+    elif alive:
+        mode, reason = "hybrid", ""
+    else:
+        mode, reason = "keyword", "unreachable"
+    return {**describe(), "reachable": alive, "mode": mode, "reason": reason}
 
 
 # ── 编码 / 解码 ────────────────────────────────────────
@@ -258,7 +340,7 @@ async def _openai_embed(texts: list[str]) -> list[list[float]]:
     if EMBEDDING_API_KEY:
         headers["Authorization"] = f"Bearer {EMBEDDING_API_KEY}"
     out: list[list[float]] = []
-    async with httpx.AsyncClient(timeout=EMBEDDING_TIMEOUT) as client:
+    async with _client(EMBEDDING_TIMEOUT) as client:
         for start in range(0, len(texts), _BATCH):
             chunk = texts[start : start + _BATCH]
             payload = {"model": EMBEDDING_MODEL, "input": chunk}

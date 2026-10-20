@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ASK_BASE } from '@/lib/api';
+import { ASK_BASE, getRetrievalHealth, type RetrievalHealth } from '@/lib/api';
 
 /** 出处。pdfUrl 仅收藏文章有：原文 PDF 存档链接，供对照总结交叉验证。quote 是那一段的原文摘录 */
 type Source = {
@@ -65,6 +65,32 @@ function plainQuote(raw: string): string {
     .replace(/[*`]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * 一行字说清「现在按什么在查」。
+ *
+ * 只分两档，但降级要说清是哪一种：没配、字面哈希、连不上，处理方式完全不同。
+ * 技术细节（provider / 维度 / 端点）放 title，正文只留人话。
+ */
+function retrievalLine(h: RetrievalHealth): string {
+  if (h.mode === 'hybrid') return `语义检索 · ${h.model}`;
+  if (h.reason === 'unreachable') return '仅关键词检索 · 语义模型连不上';
+  if (h.reason === 'hash') return '仅关键词检索 · 当前是字面匹配';
+  return '仅关键词检索 · 未配置语义模型';
+}
+
+function retrievalTitle(h: RetrievalHealth): string {
+  if (h.mode === 'hybrid') {
+    return `语义 + 关键词混合检索（${h.provider} / ${h.model}，${h.dim} 维）`;
+  }
+  if (h.reason === 'unreachable') {
+    return '语义模型在配置里，但连不上：这一轮只按字面词命中，近义改写会漏召回。启动 Ollama 后会自动恢复。';
+  }
+  if (h.reason === 'hash') {
+    return '当前是字面哈希向量，只抓字面重合与词序，抓不到同义替换。换成真模型见 docs/DESIGN.md。';
+  }
+  return '没配向量模型，检索只走关键词通道。配置方式见 docs/DESIGN.md。';
 }
 
 /**
@@ -378,6 +404,20 @@ export function BlogAssistant() {
   const [stepsOpen, setStepsOpen] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const loadedRef = useRef(false);
+  /** 当前检索档位：语义没了也不会报错，只会答得更差，所以得有个地方说明白 */
+  const [health, setHealth] = useState<RetrievalHealth | null>(null);
+
+  const refreshHealth = useCallback(() => {
+    getRetrievalHealth()
+      .then(setHealth)
+      // 后端没起时整块不显示：这行是解释「为什么答得不准」，不是又一个错误提示
+      .catch(() => setHealth(null));
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    refreshHealth();
+  }, [open, refreshHealth]);
 
   // 只有文章详情页才谈得上「只搜本文」
   const articleSlug = (() => {
@@ -574,9 +614,11 @@ export function BlogAssistant() {
         setBusy(false);
         setStatusText(null);
         setHasTokens(false);
+        // 答完之后再对一次：这轮可能就是因为对面掉了才退回关键词
+        refreshHealth();
       }
     },
-    [articleSlug, askViaJson, askViaStream, busy, scopeToArticle],
+    [articleSlug, askViaJson, askViaStream, busy, refreshHealth, scopeToArticle],
   );
 
   return (
@@ -744,6 +786,21 @@ export function BlogAssistant() {
                 发送
               </button>
             </div>
+            {/* 档位行：语义掉了不会报错、只会答得更差，这是唯一能看出来的地方 */}
+            {health && (
+              <p
+                className="mt-2 flex items-center gap-1.5 text-[10.5px] text-ink-dim"
+                title={retrievalTitle(health)}
+              >
+                <span
+                  aria-hidden
+                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                    health.mode === 'hybrid' ? 'bg-emerald-500' : 'bg-amber-500'
+                  }`}
+                />
+                <span className="truncate">{retrievalLine(health)}</span>
+              </p>
+            )}
           </div>
         </section>
       )}

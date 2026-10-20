@@ -21,6 +21,7 @@
 
 - **唯一可选的外部进程是本地 Ollama**（提供语义向量）：不装也行，检索自动退回纯关键词，
   只是改写提问的命中率会从 15/16 掉回 11/16；开了就是 `.env` 里那三行 `EMBEDDING_*`。
+  它掉线时助手面板底部会直接写明「仅关键词检索 · 语义模型连不上」——降级不再无声。
 - **唯一的外部数据源是首页 GitHub 热力图**（`GITHUB_USERNAME`）：后端代理第三方接口并缓存 6 小时，
   连不上就用旧缓存，一次都没成功过就整块不渲染——首页不会因为别人家的接口而白屏。
 - **不配 LLM 也能跑通全部主线**：回答由「原文节选 + 出处」拼成（Mock 模式），
@@ -60,6 +61,7 @@ cd server && VAULT_DIR="/path/to/your/vault" python -m scripts.init_db
 | `cd server && python -m pytest` | 后端纯函数单测（不连库不发请求，数秒跑完；先装 `requirements-dev.txt`） |
 | `cd server && python -m scripts.embed_chunks` | 补向量（幂等）；`--rebuild` 全量重算，`--stats` 只看现状 |
 | `cd server && python -m scripts.eval_retrieval` | 检索评估：关键词 vs 混合的位次 / hit@4 / MRR |
+| `npm run e2e` | 三条冒烟：首页三区块 / 软 404 / 未登录后台跳登录（需前后端都在跑，用系统 Edge） |
 
 微信收藏 → 知识库（收件箱管道：浏览器打开文章 → 复制链接，其余全自动）。
 两个入口同一份实现（`server/app/services/clipping.py`）：CLI 是 `python -m scripts.clip <url>`
@@ -153,6 +155,9 @@ content/
   moments.json       说说种子数据
   friends.json       友链种子数据（仅在 friends 表为空时灌，之后归后台管）
   town/agents.json   角色设定（人格、口吻），博客助手也在这里
+e2e/
+  smoke.mjs          三条冒烟：首页三区块 / 软 404 / 未登录后台跳登录
+                     （不碰 LLM；浏览器用系统 Edge，不下载 Chromium）
 docs/
   DESIGN.md          设计与实现说明：架构取舍、检索标定、素材规格、配置与构建注意事项
   EXECUTION_PLAN.md  进展 / 验收 / 待办（任务级清单的唯一出处）
@@ -179,8 +184,8 @@ public/
 
 - **纯图文章**（公众号正文全在截图里）去图后不足 200 字即不进检索，命中时提示去看原文 PDF。
   候选方向：OCR 抽字 / 视觉模型描述图片 / 干脆不索引。
-- **前端没有回归测试**：后端纯函数单测兜住了，浏览器侧仍是临时脚本，
-  需要几条冒烟 e2e 固化下来（首页可读、文章页可读、问一句能出带出处的答案）。
+- **前端只有三条冒烟**：`npm run e2e` 盯住「首页三区块 / 软 404 / 后台跳登录」——这三条是
+  整体崩掉最丢人的路径，不是覆盖率。助手问答、编辑器这类交互仍靠临时脚本，没有固化。
 - **桌宠素材对齐**：`hover` 三帧水平中心差 12% 帧宽、`pet_head` 的手臂被左边缘切出平口，
   都要重跑生图，代码补不了。
 

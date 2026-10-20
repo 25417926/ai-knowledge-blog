@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 
 import pytest
@@ -24,9 +25,11 @@ def _restore_config():
     """每个用例前后都把全局配置复位：这些是模块级状态，串味了会互相骗。"""
     embedding.configure("none")
     embedding.clear_cache()
+    embedding._probe = None
     yield
     embedding.configure("none")
     embedding.clear_cache()
+    embedding._probe = None
 
 
 # ── 信封 ───────────────────────────────────────────────
@@ -360,3 +363,148 @@ class TestOpenAICompatible:
         # 之后才认得出「库里存的向量跟当前模型不是一套」
         asyncio.run(embedding.embed_texts(["甲"]))
         assert embedding.dim() == 3
+
+
+# ── 运行状态（给界面看的那一层）────────────────────────
+
+
+class TestStatus:
+    """「配置对不对」和「现在能不能用」是两件事，这一组守的就是这个区别。
+
+    真实场景：Ollama 停掉后 base_url 与模型名都还在，`ready()` 照样 True，
+    `embed_query` 每次失败、静默退回关键词——答案变差，而界面毫无变化。
+    所以 `status()` 要真探一次对面在不在，并且把「没配」与「连不上」分开。
+    """
+
+    @staticmethod
+    def _stub(status=200, boom=False, calls=None):
+        class Resp:
+            def __init__(self):
+                self.status_code = status
+
+            @property
+            def is_success(self):
+                return 200 <= self.status_code < 300
+
+        class Client:
+            def __init__(self, *a, **kw):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def get(self, url, headers=None):
+                if calls is not None:
+                    calls.append(url)
+                if boom:
+                    raise embedding.httpx.ConnectError("connection refused")
+                return Resp()
+
+        return Client
+
+    def test_none_provider_says_off_not_unreachable(self):
+        embedding.configure("none")
+        out = asyncio.run(embedding.status())
+        assert out["mode"] == "keyword"
+        assert out["reason"] == "off"
+        # 没配向量不是「故障」，reachable 必须是 None 而不是 False，
+        # 否则界面会把「本来就没开」一直显示成红色异常
+        assert out["reachable"] is None
+
+    def test_hash_provider_keeps_its_reason(self):
+        embedding.configure("hash", model="hash")
+        out = asyncio.run(embedding.status())
+        assert out["mode"] == "keyword"
+        assert out["reason"] == "hash"
+
+    def test_reachable_openai_is_hybrid(self, monkeypatch):
+        monkeypatch.setattr(embedding.httpx, "AsyncClient", self._stub())
+        embedding.configure("openai", base_url="http://x/v1", model="m")
+        out = asyncio.run(embedding.status())
+        assert out["mode"] == "hybrid"
+        assert out["reason"] == ""
+        assert out["reachable"] is True
+
+    def test_connect_error_degrades_without_raising(self, monkeypatch):
+        monkeypatch.setattr(embedding.httpx, "AsyncClient", self._stub(boom=True))
+        embedding.configure("openai", base_url="http://127.0.0.1:11434/v1", model="m")
+        out = asyncio.run(embedding.status())
+        # 探测自己不许抛：它挂在 /api/health 上，探测失败不能把健康检查带崩
+        assert out["mode"] == "keyword"
+        assert out["reason"] == "unreachable"
+        assert out["reachable"] is False
+
+    def test_401_counts_as_unreachable(self, monkeypatch):
+        monkeypatch.setattr(embedding.httpx, "AsyncClient", self._stub(status=401))
+        embedding.configure("openai", base_url="http://x/v1", model="m")
+        out = asyncio.run(embedding.status())
+        # key 配错与「没启动」对检索是同一个后果，界面不必区分
+        assert out["mode"] == "keyword"
+        assert out["reason"] == "unreachable"
+
+    def test_ready_stays_true_when_unreachable(self, monkeypatch):
+        """这条是整组的核心：ready() 的语义**不许**被改成探活。
+
+        它被检索路径与补向量任务当开关用，语义一变，配置了就能跑的逻辑全乱。
+        「到底通不通」只走 status()。
+        """
+        monkeypatch.setattr(embedding.httpx, "AsyncClient", self._stub(boom=True))
+        embedding.configure("openai", base_url="http://127.0.0.1:11434/v1", model="qwen3-embedding:4b")
+        assert embedding.ready() is True
+        assert asyncio.run(embedding.status())["mode"] == "keyword"
+
+    def test_probe_caches_then_refreshes(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(embedding.httpx, "AsyncClient", self._stub(calls=calls))
+        embedding.configure("openai", base_url="http://x/v1", model="m")
+
+        asyncio.run(embedding.probe())
+        asyncio.run(embedding.probe())
+        assert len(calls) == 1, "30 秒内的重复查询不该反复打 Ollama"
+
+        # 把缓存做旧（不去 monkeypatch time.monotonic：那会连带改到事件循环的时钟）
+        stamp, alive = embedding._probe
+        embedding._probe = (stamp - embedding._PROBE_TTL - 1, alive)
+        asyncio.run(embedding.probe())
+        assert len(calls) == 2, "缓存过期必须重探，否则 Ollama 停了也察觉不到"
+
+
+# ── HTTP 客户端 ────────────────────────────────────────
+
+
+class TestHttpClient:
+    """本机服务不该走系统代理。
+
+    这次是实测撞出来的：机器上 `HTTP_PROXY` 设着、`NO_PROXY` 为空，httpx 默认
+    把 `127.0.0.1:11434` 也交给代理；代理不认这个端口就返回 502 —— 配置全对、
+    模型也在跑，却每次都静默退回关键词。探测与检索必须走同一个客户端，否则还会
+    出现「探测说通、检索还是降级」这种自相矛盾。
+    """
+
+    @staticmethod
+    def _read(client):
+        async def inner():
+            try:
+                return client.trust_env
+            finally:
+                await client.aclose()
+
+        return asyncio.run(inner())
+
+    def test_local_base_url_ignores_system_proxy(self, monkeypatch):
+        monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:60944")
+        monkeypatch.delenv("NO_PROXY", raising=False)
+        embedding.configure("openai", base_url="http://127.0.0.1:11434/v1", model="m")
+        assert self._read(embedding._client(1.0)) is False
+
+    def test_localhost_name_is_also_local(self):
+        embedding.configure("openai", base_url="http://localhost:11434/v1", model="m")
+        assert self._read(embedding._client(1.0)) is False
+
+    def test_remote_base_url_still_uses_proxy(self):
+        # 远程 embedding 服务该走代理，别把 trust_env=False 顺手用到所有地址上
+        embedding.configure("openai", base_url="https://api.example.com/v1", model="m")
+        assert self._read(embedding._client(1.0)) is True
