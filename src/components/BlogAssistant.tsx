@@ -5,8 +5,14 @@ import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ASK_BASE } from '@/lib/api';
 
-/** 出处。pdfUrl 仅收藏文章有：原文 PDF 存档链接，供对照总结交叉验证 */
-type Source = { postSlug: string; postTitle: string; heading: string; pdfUrl?: string | null };
+/** 出处。pdfUrl 仅收藏文章有：原文 PDF 存档链接，供对照总结交叉验证。quote 是那一段的原文摘录 */
+type Source = {
+  postSlug: string;
+  postTitle: string;
+  heading: string;
+  quote?: string | null;
+  pdfUrl?: string | null;
+};
 
 /** 工具调用的一步（「检索“线程池 核心参数” → 命中 4 篇」）。历史数据可能缺 label，兜底用 tool 名 */
 type Step = { tool: string; label: string; hits: number; ms: number };
@@ -25,7 +31,7 @@ type Message = {
 
 type AskResponse = {
   reply: string;
-  citations: { postSlug: string; postTitle: string; heading: string; pdfUrl?: string | null }[];
+  citations: Source[];
   turnId: number;
   model: string;
   mock: boolean;
@@ -47,6 +53,178 @@ type HistoryResponse = {
 function lastHeading(heading: string): string {
   const parts = heading.split('>');
   return parts[parts.length - 1].trim();
+}
+
+/** 引文是 Markdown 片段（列表、加粗、行内代码），卡片里要的是人话，不是符号 */
+function plainQuote(raw: string): string {
+  return raw
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^\s*[-*+]\s+/gm, '· ')
+    .replace(/[*`]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * 一篇回答的出处按「文章」归拢，不再一段一张卡。
+ *
+ * 起因是真实的：某轮回答正文只标了 [1][5]，出处却把检索到的 7 段全列了出来，
+ * 五分之四是这次答话没用到的东西。段落属于文章，读者要的是「这话出自哪篇、哪一节」，
+ * 而不是一份检索流水账。所以卡片=文章，展开=那几段的原文。
+ */
+type SourceGroup = {
+  slug: string;
+  title: string;
+  pdfUrl: string | null;
+  items: { n: number; heading: string; quote: string }[];
+};
+
+/** 正文里真正标出来的 [n]（没有标注时返回空集，由调用方退回「全部展示」） */
+function citedNumbers(content: string): Set<number> {
+  const found = new Set<number>();
+  for (const match of content.matchAll(/\[(\d{1,2})\]/g)) found.add(Number(match[1]));
+  return found;
+}
+
+function groupSources(sources: Source[], keep: Set<number> | null): SourceGroup[] {
+  const groups = new Map<string, SourceGroup>();
+  sources.forEach((s, i) => {
+    const n = i + 1;
+    if (keep && !keep.has(n)) return;
+    let group = groups.get(s.postSlug);
+    if (!group) {
+      group = { slug: s.postSlug, title: s.postTitle, pdfUrl: s.pdfUrl ?? null, items: [] };
+      groups.set(s.postSlug, group);
+    }
+    group.items.push({ n, heading: s.heading, quote: s.quote ? plainQuote(s.quote) : '' });
+    if (s.pdfUrl) group.pdfUrl = s.pdfUrl;
+  });
+  return [...groups.values()];
+}
+
+/** 原生 details 当折叠：点正文标号时直接改它的 open，不必再往 React 里搬一份状态 */
+function openSourceCard(id: string) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (el instanceof HTMLDetailsElement) el.open = true;
+  el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+function SourceCards({
+  groups,
+  msgId,
+  withLabel,
+}: {
+  groups: SourceGroup[];
+  msgId: string;
+  withLabel: boolean;
+}) {
+  if (groups.length === 0) return null;
+  return (
+    <div className={withLabel ? 'mt-2 space-y-1.5' : 'mt-1.5 space-y-1.5'}>
+      {withLabel && <p className="text-[10.5px] tracking-wide text-ink-dim">出处</p>}
+      {groups.map((g, gi) => {
+        const single = g.items.length === 1;
+        return (
+          <details
+            key={`${g.slug}-${gi}`}
+            id={`src-${msgId}-${gi}`}
+            className="group rounded-lg border border-ink-line transition-colors open:border-accent/40 open:bg-ink-soft/50"
+          >
+            <summary className="flex cursor-pointer list-none items-baseline gap-2 px-2.5 py-1.5 text-[12px] [&::-webkit-details-marker]:hidden">
+              <span className="min-w-0 flex-1 truncate">
+                <span className="text-ink-text">{g.title}</span>
+                <span className="ml-1.5 text-ink-dim">
+                  › {single ? lastHeading(g.items[0].heading) : `${g.items.length} 段`}
+                </span>
+              </span>
+              <span className="shrink-0 text-[9px] text-ink-dim transition-transform group-open:rotate-180">
+                ▼
+              </span>
+            </summary>
+            <div className="space-y-2 border-t border-ink-line px-2.5 py-2">
+              {g.items.map((item) => (
+                <div key={item.n}>
+                  {/* 单段卡的小节名已经写在标题行上，展开区再写一遍就是重复 */}
+                  {!single && (
+                    <p className="flex items-baseline gap-1.5 text-[10.5px] text-ink-dim">
+                      <span className="font-mono text-accent-ink">{item.n}</span>
+                      <span className="min-w-0 flex-1 truncate">{lastHeading(item.heading)}</span>
+                    </p>
+                  )}
+                  {item.quote && (
+                    <p
+                      className={`line-clamp-3 text-[11.5px] leading-[1.65] text-ink-dim ${
+                        single ? '' : 'mt-0.5'
+                      }`}
+                    >
+                      {item.quote}
+                    </p>
+                  )}
+                </div>
+              ))}
+              <div className="flex items-center gap-3 pt-0.5">
+                <Link
+                  href={`/posts/${encodeURIComponent(g.slug)}`}
+                  className="text-[11px] text-accent-ink hover:underline"
+                >
+                  读整篇 ↗
+                </Link>
+                {g.pdfUrl && (
+                  <a
+                    href={g.pdfUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[11px] text-accent-ink hover:underline"
+                  >
+                    原文 PDF ↗
+                  </a>
+                )}
+              </div>
+            </div>
+          </details>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * 回答正文：把 [n] 渲染成可点的标号，点了就地展开对应那篇的出处卡片。
+ * 标号仍是等宽的浅色小块，不抢正文的视觉重量——它是注解，不是内容。
+ */
+function AnswerText({
+  content,
+  streaming,
+  resolve,
+}: {
+  content: string;
+  streaming: boolean;
+  resolve: (n: number) => string | null;
+}) {
+  return (
+    <p className="whitespace-pre-wrap rounded-2xl border border-ink-line bg-ink-soft px-3.5 py-2.5 text-[13px] leading-6 text-ink-text">
+      {content.split(/(\[\d{1,2}\])/g).map((part, i) => {
+        const match = /^\[(\d{1,2})\]$/.exec(part);
+        const target = match ? resolve(Number(match[1])) : null;
+        if (!match || !target) return <span key={i}>{part}</span>;
+        return (
+          <button
+            key={i}
+            type="button"
+            onClick={() => openSourceCard(target)}
+            title="看这一段出处"
+            className="mx-px rounded bg-accent/10 px-1 align-baseline font-mono text-[10.5px] leading-none text-accent-ink transition-colors hover:bg-accent/25"
+          >
+            {match[1]}
+          </button>
+        );
+      })}
+      {streaming && <span className="ml-0.5 inline-block animate-pulse text-accent">▍</span>}
+    </p>
+  );
 }
 
 /**
@@ -440,65 +618,60 @@ export function BlogAssistant() {
               </p>
             )}
 
-            {messages.map((m) => (
-              <div key={m.id} className={m.role === 'user' ? 'flex justify-end' : 'block'}>
-                {m.role === 'user' ? (
-                  <p className="max-w-[85%] rounded-2xl bg-accent px-3.5 py-2.5 text-[13px] leading-6 text-white">
-                    {m.content}
-                  </p>
-                ) : (
-                  <div>
-                    <StepTrail
-                      steps={m.steps}
-                      sourceCount={m.sources.length}
-                      streaming={m.streaming === true}
-                      open={stepsOpen === m.id}
-                      onToggle={() => setStepsOpen((v) => (v === m.id ? null : m.id))}
-                    />
-                    {(m.content !== '' || !m.streaming) && (
-                      <p className="whitespace-pre-wrap rounded-2xl border border-ink-line bg-ink-soft px-3.5 py-2.5 text-[13px] leading-6 text-ink-text">
-                        {m.content}
-                        {m.streaming && (
-                          <span className="ml-0.5 inline-block animate-pulse text-accent">▍</span>
-                        )}
-                      </p>
-                    )}
-                    {m.sources.length > 0 && (
-                      <div className="mt-2 space-y-1.5">
-                        <p className="text-[10.5px] tracking-wide text-ink-dim">出处</p>
-                        {m.sources.map((s, i) => (
-                          <div
-                            key={`${s.postSlug}-${i}`}
-                            className="rounded-lg border border-ink-line px-2.5 py-1.5 text-[12px] transition-colors hover:border-accent/60"
-                          >
-                            <Link
-                              href={`/posts/${encodeURIComponent(s.postSlug)}`}
-                              className="flex items-baseline gap-2"
-                            >
-                              <span className="font-mono text-[10.5px] text-accent-ink">{i + 1}</span>
-                              <span className="min-w-0 flex-1">
-                                <span className="text-ink-text">{s.postTitle}</span>
-                                <span className="ml-1.5 text-ink-dim">› {lastHeading(s.heading)}</span>
-                              </span>
-                            </Link>
-                            {s.pdfUrl && (
-                              <a
-                                href={s.pdfUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="mt-1 inline-block text-[10.5px] text-accent-ink hover:underline"
-                              >
-                                对照原文 PDF ↗
-                              </a>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
+            {messages.map((m) => {
+              if (m.role === 'user') {
+                return (
+                  <div key={m.id} className="flex justify-end">
+                    <p className="max-w-[85%] rounded-2xl bg-accent px-3.5 py-2.5 text-[13px] leading-6 text-white">
+                      {m.content}
+                    </p>
                   </div>
-                )}
-              </div>
-            ))}
+                );
+              }
+              // 正文标了 [n] 就只认可这些：没标的多半是检索顺带命中，收进折叠行
+              const cited = citedNumbers(m.content);
+              const keep = cited.size > 0 ? cited : null;
+              const primary = groupSources(m.sources, keep);
+              const secondary = keep
+                ? groupSources(
+                    m.sources,
+                    new Set(m.sources.map((_, i) => i + 1).filter((n) => !keep.has(n))),
+                  )
+                : [];
+              const extra = secondary.reduce((sum, g) => sum + g.items.length, 0);
+              // 标号 → 卡片：同一篇里的几个 n 都指向同一张卡
+              const cardOf = new Map<number, string>();
+              primary.forEach((g, gi) => g.items.forEach((it) => cardOf.set(it.n, `src-${m.id}-${gi}`)));
+              return (
+                <div key={m.id} className="block">
+                  <StepTrail
+                    steps={m.steps}
+                    sourceCount={primary.length}
+                    streaming={m.streaming === true}
+                    open={stepsOpen === m.id}
+                    onToggle={() => setStepsOpen((v) => (v === m.id ? null : m.id))}
+                  />
+                  {(m.content !== '' || !m.streaming) && (
+                    <AnswerText
+                      content={m.content}
+                      streaming={m.streaming === true}
+                      resolve={(n) => cardOf.get(n) ?? null}
+                    />
+                  )}
+                  <SourceCards groups={primary} msgId={m.id} withLabel />
+                  {secondary.length > 0 && (
+                    <details className="mt-2 rounded-lg border border-dashed border-ink-line" data-fold="rest">
+                      <summary className="cursor-pointer list-none px-2.5 py-1.5 text-[10.5px] text-ink-dim [&::-webkit-details-marker]:hidden">
+                        另有 {secondary.length} 篇 {extra} 段检索命中（本答未引用）
+                      </summary>
+                      <div className="px-1.5">
+                        <SourceCards groups={secondary} msgId={`${m.id}-x`} withLabel={false} />
+                      </div>
+                    </details>
+                  )}
+                </div>
+              );
+            })}
 
           {/* 首个 token 到达、或步骤条接管后，过程提示让位 */}
           {busy && !hasTokens && !hasSteps && (

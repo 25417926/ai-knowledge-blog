@@ -1308,6 +1308,7 @@ async def read_log(session: AsyncSession, session_key: str, agent_slug: str, lim
                     Citation.turn_id,
                     Citation.post_slug,
                     Citation.heading_path,
+                    Citation.quote,
                     Post.title,
                     Post.category,
                     Post.source_path,
@@ -1319,12 +1320,14 @@ async def read_log(session: AsyncSession, session_key: str, agent_slug: str, lim
             )
         ).all()
         pdf_map, _ = await _clipping_marks(session)
-        for turn_id, slug, heading, title, category, source_path in rows:
+        for turn_id, slug, heading, quote, title, category, source_path in rows:
             by_turn.setdefault(turn_id, []).append(
                 {
                     "postSlug": slug,
                     "postTitle": title,
                     "heading": heading,
+                    # 与实时 done 事件同字段：历史回放也要能展示段落原文，否则刷新前后两套观感
+                    "quote": quote,
                     "pdfUrl": pdf_map.get(source_path) if category == "clippings" else None,
                 }
             )
