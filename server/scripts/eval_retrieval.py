@@ -91,9 +91,32 @@ async def evaluate(provider: str, topk: int, verbose: bool) -> int:
     configure_from_env(provider)
     info = embedding.describe()
     if not info["ready"]:
-        print(f"向量档未启用：provider={info['provider']}")
+        # `none` 是默认档，不是配错了——这时候只报关键词基线。
+        # 别像以前那样直接 return 1 走人：那等于「摘掉向量之后，再也没法回答掉到哪儿了」。
+        if info["provider"] != "none":
+            print(f"向量档配置不完整：provider={info['provider']}，需要同时给 BASE_URL 与 MODEL")
+            await dispose_engine()
+            return 1
+
+        def hit_at(rows: list[dict], expected: set[str]) -> int:
+            return next(
+                (i for i, r in enumerate(rows, start=1) if r["post_slug"] in expected), 0
+            )
+
+        n = len(QUERY_SET)
+        hits = sum(1 for q, e, _ in QUERY_SET if hit_at(baseline[q], e))
+        mrr = sum(
+            (1 / hit_at(baseline[q], e)) if hit_at(baseline[q], e) else 0.0
+            for q, e, _ in QUERY_SET
+        ) / n
+        print(f"向量档未启用（provider=none）· 查询 {n} 条 · top{topk}\n")
+        print(f"  命中率 {hits}/{n}   MRR {mrr:.3f}")
+        for kind in ("原词", "改写"):
+            rows = [(q, e) for q, e, k in QUERY_SET if k == kind]
+            kh = sum(1 for q, e in rows if hit_at(baseline[q], e))
+            print(f"  · {kind}（{len(rows)} 条）：{kh}")
         await dispose_engine()
-        return 1
+        return 0
     covered = await vector_coverage()
     hybrid: dict[str, list[dict]] = {}
     for query, _, _ in QUERY_SET:

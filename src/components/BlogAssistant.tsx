@@ -85,7 +85,7 @@ function retrievalTitle(h: RetrievalHealth): string {
     return `语义 + 关键词混合检索（${h.provider} / ${h.model}，${h.dim} 维）`;
   }
   if (h.reason === 'unreachable') {
-    return '语义模型在配置里，但连不上：这一轮只按字面词命中，近义改写会漏召回。启动 Ollama 后会自动恢复。';
+    return '语义模型在配置里，但连不上：这一轮只按字面词命中，近义改写会漏召回。检查端点是否在跑、系统代理是否把本机地址也叼走了。';
   }
   if (h.reason === 'hash') {
     return '当前是字面哈希向量，只抓字面重合与词序，抓不到同义替换。换成真模型见 docs/DESIGN.md。';
@@ -786,8 +786,10 @@ export function BlogAssistant() {
                 发送
               </button>
             </div>
-            {/* 档位行：语义掉了不会报错、只会答得更差，这是唯一能看出来的地方 */}
-            {health && (
+            {/* 档位行：只在「本该有语义、现在没有」时才画。
+                reason==='off' 是默认态（压根没配向量），那时候挂一行「未配置语义模型」
+                等于让每个装完就跑的人天天看一条黄灯，属于噪音。 */}
+            {health && health.reason !== 'off' && (
               <p
                 className="mt-2 flex items-center gap-1.5 text-[10.5px] text-ink-dim"
                 title={retrievalTitle(health)}
