@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .database import dispose_engine, get_session, init_schema
-from .api.routes import admin, ask, clippings, content
+from .api.routes import admin, ask, clippings, content, github
 from .services import embedding
 from .services.agent_chat import configure_llm
 
@@ -63,6 +63,7 @@ app.add_middleware(
 app.include_router(content.router, prefix="/api", tags=["content"])
 app.include_router(ask.router, prefix="/api", tags=["ask"])
 app.include_router(clippings.router, prefix="/api", tags=["clippings"])
+app.include_router(github.router, prefix="/api", tags=["github"])
 app.include_router(admin.router, prefix="/api", tags=["admin"])
 
 

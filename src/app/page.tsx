@@ -1,9 +1,10 @@
 import Link from 'next/link';
 import { Carousel, type CarouselItem } from '@/components/Carousel';
+import { GitHubHeatmap } from '@/components/GitHubHeatmap';
 import { StatusCard, ThemeCard } from '@/components/HomeCards';
 import { TopicGuide } from '@/components/TopicGuide';
 import { coverVars } from '@/lib/cover';
-import { listCategories, listMoments, listPosts } from '@/lib/api';
+import { getGithubHeatmap, listCategories, listMoments, listPosts } from '@/lib/api';
 import { site } from '@/lib/site';
 
 export const dynamic = 'force-dynamic';
@@ -11,10 +12,12 @@ export const dynamic = 'force-dynamic';
 const CAROUSEL_SIZE = 5;
 
 export default async function HomePage() {
-  const [posts, moments, categories] = await Promise.all([
+  const [posts, moments, categories, heatmap] = await Promise.all([
     listPosts(),
     listMoments(),
     listCategories(),
+    // 热力图是锦上添花：第三方挂了就整块不渲染，不能让首页跟着挂
+    getGithubHeatmap().catch(() => null),
   ]);
 
   // 轮播里的日期取到「日」即可——首页不需要精确到秒，那是归档页的事
@@ -109,6 +112,9 @@ export default async function HomePage() {
 
       {/* ── 第二排：主题导览（从哪读） ─────────────────────── */}
       <TopicGuide categories={categories} posts={posts} />
+
+      {/* ── GitHub 活跃度：把「最近有没有在写」摊开给访客看 ── */}
+      {heatmap ? <GitHubHeatmap data={heatmap} /> : null}
 
       {/* ── 第三排：状态 / 主题 / 说说 ─────────────────────── */}
       <div className="mt-10 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">

@@ -22,13 +22,15 @@ npm install
 npm run dev                   # http://localhost:3000
 ```
 
-首页是卡片墙：资料卡 + 最新文章轮播 + 状态/主题/说说卡。
+首页是卡片墙：资料卡 + 最新文章轮播 + 主题导览 + GitHub 贡献热力图 + 状态/主题/说说卡。
 顶部导航在「归档 / 项目 / 说说 / 友链 / 关于」之间切换，`/blog` 旧地址仍会 308 跳新地址。
 
 零外部服务依赖：不需要 Docker、不需要装数据库服务器、不需要任何 API Key。
 两个进程各自可热重载；前端未启动时后端仍可独立调试（`http://127.0.0.1:8000/docs` 有完整 API 文档）。
 **唯一可选的外部进程是本地 Ollama**（提供语义向量）：不装也行，检索自动退回纯关键词，
 只是改写提问的命中率会从 15/16 掉回 11/16；开了就是 `.env` 里那三行 `EMBEDDING_*`。
+**唯一的外部数据源是首页 GitHub 热力图**（`GITHUB_USERNAME`）：后端代理第三方接口并缓存 6 小时，
+连不上就用旧缓存，一次都没成功过就整块不渲染——首页不会因为别人家的接口而白屏。
 
 ## 命令
 
@@ -38,7 +40,7 @@ npm run dev                   # http://localhost:3000
 | `npm run build` | 前端生产构建 |
 | `npm run server` | 启动 Python 后端（:8000，热重载） |
 | `npm run server:init` | 建表 + 种子 + 导入 Vault（幂等，可反复跑） |
-| `cd server && python -m pytest` | 后端纯函数单测（194 条，2 秒；先装 `requirements-dev.txt`） |
+| `cd server && python -m pytest` | 后端纯函数单测（209 条，2 秒；先装 `requirements-dev.txt`） |
 | `cd server && python -m scripts.embed_chunks` | 补向量（幂等）；`--rebuild` 全量重算，`--stats` 只看现状 |
 | `cd server && python -m scripts.eval_retrieval` | 检索评估：关键词 vs 混合的位次 / hit@4 / MRR |
 
@@ -72,7 +74,7 @@ URL 唯一，重复收藏原地更新。收藏稿落在
 
 | 路由 | 内容 |
 |---|---|
-| `/` | 首页：资料卡 + 最新文章轮播 + 主题导览（全站索引入口 + 分类导航）+ 状态/说说 |
+| `/` | 首页：资料卡 + 最新文章轮播 + 主题导览（全站索引入口 + 分类导航）+ GitHub 热力图 + 状态/说说 |
 | `/timeline` | 归档与探索：搜索 + 主题 + 标签 + 双视图（中枢链路 / 矩阵网格） |
 | `/posts/[slug]` | 文章详情：封顶封面、目录、代码高亮、灯箱、上下篇、相关文章、出链/反链 |
 | `/projects` | 项目矩阵：搜索 + 技术栈胶囊 + 外链 |
@@ -114,6 +116,7 @@ src/                       前端（Next.js App Router）
     MingyuePet.tsx      鲸鱼娘桌宠「溟月」：PixiJS 帧动画 + 状态机，同时是助手唯一入口
     Carousel.tsx        卡片轮播（首页复用）
     TopicGuide.tsx      首页主题导览：全站索引主入口 + 按分类摊开各主题的文章
+    GitHubHeatmap.tsx   首页 GitHub 贡献热力图：SVG 网格 + 悬停提示，数据来自后端代理
     Toc.tsx             正文目录（滚动高亮）
     CodeCopy.tsx        代码块的语言标签 / 复制 / 行号
     Lightbox.tsx        图片灯箱（事件委托，文章与说说复用）
@@ -138,13 +141,14 @@ server/                   后端（FastAPI + SQLAlchemy）
       content.py      内容查询接口
       ask.py          博客助手问答（整包 + SSE 流式双路由）与会话回放
       clippings.py    收藏的公开出口：原文 PDF 存档下载（按 URL 命中）
+      github.py       GitHub 贡献热力图：代理第三方接口 + 6 小时缓存，失败降级不拖垮首页
       admin.py        后台接口：口令登录 + 文章 CRUD + 友链 CRUD + 收藏 + 对话日志（全部要过 require_admin）
   scripts/
     init_db.py       建表 + 种子 + Vault 导入（幂等；`--embed` 顺带补向量）
     clip.py          微信收藏管道的 CLI 外壳（流程见 services/clipping.py）
     embed_chunks.py  给切分块补向量（幂等、`--rebuild`、`--stats`）
     eval_retrieval.py 检索评估：关键词 vs 混合，并排看位次 / hit@4 / MRR
-  tests/             纯函数单测（pytest，194 条，不连库不发请求）
+  tests/             纯函数单测（pytest，209 条，不连库不发请求）
   pytest.ini         pythonpath = .，从 server/ 直接 python -m pytest
   requirements.txt
   requirements-dev.txt   只多一个 pytest
@@ -379,6 +383,9 @@ Mock 与闲聊路径没有工具调用，就什么都不画，不表演一段假
       分词与重合度、`_score_chunk` 打分、切块、好感度与事实抽取、`to_slug` 与前端
       `normalizeKey` 的同规则用例、摘抄首行导语。顺手修掉切块 bug（围栏代码块里的
       `# 注释` 被当标题，劈开 4 个块并丢掉注释行），索引重建 132 → 126 块
+- [x] 首页 GitHub 热力图 —— `server/app/api/routes/github.py` 代理第三方贡献接口（无需 Token，
+      `GITHUB_USERNAME` 配用户名）并缓存 6 小时，前端 `GitHubHeatmap.tsx` 用 SVG 画过去一年。
+      没有走浏览器直连第三方：那样会绕开 `src/lib/api.ts` 这个唯一数据出口，也拿不到缓存与降级
 - [x] 混合检索（**已启用**）—— `qwen3-embedding:4b`（本机 Ollama）× 关键词双路召回。
       关键不是「接了个向量模型」，而是发现它的余弦各向异性极强（无关文本 0.92、正确答案 0.93，
       没有缝），于是检索前先减掉**全站语料均值**再算：hit@4 11→15、MRR 0.536→0.906，

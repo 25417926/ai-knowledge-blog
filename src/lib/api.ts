@@ -161,6 +161,20 @@ export async function listFriends() {
   return get<FriendItem[]>('/api/friends');
 }
 
+// ── GitHub 贡献热力图 ─────────────────────────────────
+
+/** 后端代理第三方贡献接口并缓存 6 小时；取不到就整块不渲染，不影响首页其它内容 */
+export type GithubHeatmap = {
+  username: string;
+  total: number;
+  days: { date: string; count: number; level: number }[];
+  updatedAt: string | null;
+};
+
+export async function getGithubHeatmap() {
+  return get<GithubHeatmap>('/api/github/contributions');
+}
+
 // ── 博客助手（客户端直连 Python 端） ──────────────────
 
 export const ASK_BASE = `${API_BASE}/api/ask`;
