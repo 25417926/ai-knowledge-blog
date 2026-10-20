@@ -233,16 +233,23 @@ function AnswerText({
  * 它展示的是「确实发生过的事」——每次检索的用词、命中几条、花了多少毫秒，
  * 全部来自后端 tool_trace（本来就要落库的），不是表演出来的思考过程。
  * 没有工具调用的消息（Mock 与闲聊路径）整个区域不渲染。
+ *
+ * `rest` 是「检索到了但正文没引用」的段落：它们属于"这次查了什么"，不属于"这句话的依据"，
+ * 所以收进这一层，摘要行只留一个数字让人知道还有东西可看。
  */
 function StepTrail({
   steps,
   sourceCount,
+  rest,
+  msgId,
   streaming,
   open,
   onToggle,
 }: {
   steps: Step[];
   sourceCount: number;
+  rest: SourceGroup[];
+  msgId: string;
   streaming: boolean;
   open: boolean;
   onToggle: () => void;
@@ -251,6 +258,7 @@ function StepTrail({
   const searches = steps.filter(
     (s) => s.tool === 'search_posts' || s.tool === 'get_article_overview',
   ).length;
+  const restChunks = rest.reduce((sum, g) => sum + g.items.length, 0);
 
   const rows = steps.map((s, i) => (
     <p
@@ -284,10 +292,21 @@ function StepTrail({
         <span>
           {searches > 0 ? `检索 ${searches} 次` : `操作 ${steps.length} 步`}
           {sourceCount > 0 ? ` · 引用 ${sourceCount} 篇` : ''}
+          {rest.length > 0 ? ` · 另命中 ${rest.length} 篇` : ''}
         </span>
       </button>
       {open && (
-        <div className="mt-1 space-y-1 rounded-lg border border-ink-line px-2.5 py-2">{rows}</div>
+        <div className="mt-1 rounded-lg border border-ink-line px-2.5 py-2">
+          <div className="space-y-1">{rows}</div>
+          {rest.length > 0 && (
+            <div className="mt-2 border-t border-ink-line pt-1.5" data-fold="rest">
+              <p className="mb-1 text-[10.5px] text-ink-dim">
+                另命中 {rest.length} 篇 {restChunks} 段，本答未引用
+              </p>
+              <SourceCards groups={rest} msgId={`${msgId}-x`} withLabel={false} />
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -647,6 +666,8 @@ export function BlogAssistant() {
                   <StepTrail
                     steps={m.steps}
                     sourceCount={primary.length}
+                    rest={secondary}
+                    msgId={m.id}
                     streaming={m.streaming === true}
                     open={stepsOpen === m.id}
                     onToggle={() => setStepsOpen((v) => (v === m.id ? null : m.id))}
@@ -659,7 +680,8 @@ export function BlogAssistant() {
                     />
                   )}
                   <SourceCards groups={primary} msgId={m.id} withLabel />
-                  {secondary.length > 0 && (
+                  {/* 没有思考链可挂（旧数据 / Mock 路径）时，未引用的命中退回到出处下方 */}
+                  {m.steps.length === 0 && secondary.length > 0 && (
                     <details className="mt-2 rounded-lg border border-dashed border-ink-line" data-fold="rest">
                       <summary className="cursor-pointer list-none px-2.5 py-1.5 text-[10.5px] text-ink-dim [&::-webkit-details-marker]:hidden">
                         另有 {secondary.length} 篇 {extra} 段检索命中（本答未引用）
