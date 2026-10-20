@@ -43,9 +43,19 @@ export function nodeRadius(degree: number): number {
   return Math.min(18, 7 + degree * 1.9);
 }
 
-/** 标题在图上只能占一行：超过 9 个字截断，完整标题进 title 与 aria-label */
+/** 标题在图上只能占一行：按视觉宽度截断（中文算 2、ASCII 算 1），
+ *  不能按字符数切——「memberclub 双引擎」按 9 个字切会变成「memberclu…」 */
 export function shortTitle(title: string): string {
-  return title.length > 9 ? `${title.slice(0, 9)}…` : title;
+  const LIMIT = 20;
+  let width = 0;
+  let out = '';
+  for (const ch of title) {
+    const w = /[\x00-\xff]/.test(ch) ? 1 : 2;
+    if (width + w > LIMIT) return `${out.trimEnd()}…`;
+    width += w;
+    out += ch;
+  }
+  return out;
 }
 
 /**
