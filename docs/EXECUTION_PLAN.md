@@ -19,7 +19,7 @@
 
 检索默认走**纯关键词**：语义档（`qwen3-embedding:4b`，hit@4 11→15、MRR 0.536→0.906）
 已从默认配置摘掉（§18），代码、阈值、BLOB 向量全留，随时能开回来。
-看守这一套的是后端纯函数 **294 条**单测 + 前端 **6 条**冒烟 e2e（§20）。
+看守这一套的是后端纯函数 **294 条**单测 + 前端 **7 条**冒烟 e2e（§20、§23）。
 
 剩下的是债务与增强项：编辑器仍无预览与图片上传、`_score_chunk` 的三处偏差
 （§12 技术债 8，**向量摘掉后它是唯一通道，权重比以前更高**）、以及重标它必须
@@ -38,7 +38,7 @@
 | 数据库 | `data/blog.db`，`server/app/schema.sql` 定义 **14 张表** |
 | 内容 | 20 篇笔记 · 219 切分块 · 53 条双链 · 43 个标签 · 8 条说说 · 3 条友链 · 2 篇收藏 · 1 个角色（知行） |
 | 问答存量 | 192 轮对话（其中 96 轮提问）· 321 条引用（286 条带出处）· 3 个会话 |
-| 测试 | 后端 **294 条**纯函数单测（pytest，全绿）；前端 `npm run e2e` **6 条**断言 + 控制台零错误 |
+| 测试 | 后端 **294 条**纯函数单测（pytest，全绿）；前端 `npm run e2e` **7 条**断言 + 控制台零错误 |
 | 向量档 | `none`（默认）；`chunks.embedding` 里 126 个历史 BLOB 仍在，当前不读取 |
 
 ---
@@ -87,7 +87,7 @@
 ### 2.3 未开工 ❌
 
 - **纯图文章**：正文全在截图里的收藏稿，当前不进检索、命中即抛错提示去看原文 PDF。
-- **端到端测试**：后端纯函数 294 条已补（§9、§10、§11）；浏览器侧 `e2e/smoke.mjs` **6 条**，
+- **端到端测试**：后端纯函数 294 条已补（§9、§10、§11）；浏览器侧 `e2e/smoke.mjs` **7 条**，
   只管「整体崩掉最丢人」的路径——助手问答、编辑器、收藏、后台 CRUD 的交互仍靠一次性脚本，
   散在 `~/.workbuddy/binaries/node/workspace/`（见 §11 P4-2）。
 
@@ -557,7 +557,7 @@ CLI `embed_chunks` 也改成调用同一份 `plan()` / `fill()`，三个入口�
 | 2 | e2e 脚本入库 | ⬜ 部分：2026-10-20 只收了 2 条（图谱页 / callout），其余仍在工作区 | callout 与图谱页已进仓库；**相关文章、导览、收藏管道、后台 CRUD、桌宠**仍散在 `~/.workbuddy/binaries/node/workspace/*.js`，每次验收手跑。只收「能稳定复现、不依赖一次性数据」的，截图脚本不收 |
 | 3 | `related_posts` 与 `retrieve` 的集成测试 | 未做 | 纯函数已锁，但「信号加权后排序是否合理」只能在真库上验；需要一个临时 SQLite 夹具 |
 
-**验收**：`pytest` 全绿（当前 294 passed）；`npm run e2e` 7/7（6 条断言 + 控制台零错误），
+**验收**：`pytest` 全绿（当前 294 passed）；`npm run e2e` 8/8（7 条断言 + 控制台零错误），
 用 `playwright-core` + `channel: 'msedge'`（系统 Edge，不下载 Chromium）。
 
 ### P6 · 清理测试稿 ❌ 未做
@@ -611,7 +611,7 @@ CODEBUDDY_SAFE_DELETE_ENABLED=0 \
 
 - [ ] `/` `/timeline` `/graph` `/projects` `/moments` `/friends` `/about` 全部 200
 - [ ] `cd server && python -m pytest` → **294 passed**（改任何检索/切块/好感度逻辑都先跑这条）
-- [ ] `npm run e2e` → **7/7**（6 条断言 + 控制台零错误，前后端都要在跑）
+- [ ] `npm run e2e` → **8/8**（7 条断言 + 控制台零错误，前后端都要在跑）
 - [ ] `/posts/<真实slug>` 200；`/posts/no-such-post` **404**（防软 404 回归）
 - [ ] 收藏稿里的 `> [!tip] 一句话总结` 渲染成 callout 卡片，页面无 `[!tip]` 字面残留；暗/亮主题标题都看得清
 - [ ] `/api/posts` `/api/tags` `/api/categories` `/api/graph` `/api/moments` `/api/friends` 全部 200；`/api/chatter` **404**
@@ -1194,3 +1194,39 @@ frontmatter 按站点既有格式写（title / category / tags / date / summary�
 
 6 篇 Agent 文章的正文来自购买的课程，均已保留 `> 整理自 X 第 N 章的课程笔记` 脚注。
 仓库是 public 的，**公开分发前需自行确认授权**；如果只是本地作品集演示，当前处理已经足够诚实。
+
+## 23. 右侧目录真正跟随滚动（2026-10-20）
+
+用户反馈「右边这个 table 往下翻的时候需要跟随下翻」。代码里一直有 `sticky top-24`，
+但滚动时整块目录跟着正文一起滚出视口。
+
+### 23.1 根因：sticky 的滑动空间是 0
+
+`sticky` 元素的移动范围由**父元素高度减自身高度**决定，不是「有没有写 sticky」。
+
+```
+<aside class="order-first lg:order-none">        ← grid item，默认 stretch，高度 = 整行（≈8644px）
+  <nav class="hidden lg:block">                  ← block，高度只有内容（282px）★
+    <div class="sticky top-24">…</div>           ← 可滑动距离 = 282 - 282 = 0
+```
+
+实测 `getComputedStyle(div).position === 'sticky'`、`top: 96px`，一切「看起来对」，
+只是 `nav` 高度等于 `sticky` 高度，滚 1200px 后 `rect.top = -612`（跟着滚出去了）。
+这类失效没有报错、没有视觉异常，只有滚动时能看出来。
+
+### 23.2 修法
+
+`nav` 加 `lg:h-full`（撑满 grid 行高 = aside 高度），配 `max-h-[calc(100vh-8rem)] overflow-y-auto
+overscroll-contain`——目录本身超过一屏时在内部滚动，别把末尾条目顶出可视区。
+
+改的是 `src/components/Toc.tsx` 一行 className，其余不动。
+
+### 23.3 验收
+
+- 结构探测：`agent-多智能体协作`（8 项）滚 0 / 900 / 2400 / 5662 / 8536，目录 `top` 依次
+  `587 → 96 → 96 → 96 → 96`；`提示工程的结构化写法`（3 项）同样全程 96。
+- 新增 e2e 第 7 条「文章页目录滚动跟随」：取 `wordCount` 最大的一篇（短文章目录本来就矮，
+  失效也不明显，拿它当样本等于白测），滚到 1400 与 `docH * 0.75`，断言 `rect.top ∈ [0, 120]`。
+- **验过能真红**：临时去掉 `lg:h-full` 重新构建 → `滚到 1400 时目录 top=-813`、
+  `7/8 通过`、退出码 1；还原后重建 → `8/8`、退出码 0。
+- `next build` 通过；推送 `9366a25`，远端 `refs/heads/main` 与本地 HEAD 一致。
