@@ -81,7 +81,7 @@ URL 唯一，重复收藏原地更新。收藏稿落在
 | `/moments` | 说说流：宫格自适应、排序切换、搜索 |
 | `/friends` | 友链：卡片墙，数据入库，由 `/admin/friends` 维护 |
 | `/about` | 关于：自我介绍、时间线、技能栈、兴趣、联系方式 |
-| `/admin` `/admin/posts` `/admin/friends` `/admin/logs` | 后台：口令登录、文章增删改、友链增删改、对话日志（未配 `ADMIN_PASSWORD` 则整块禁用） |
+| `/admin` `/admin/posts` `/admin/friends` `/admin/logs` `/admin/clippings` | 后台：口令登录、文章增删改（含摘要生成）、友链增删改、收藏、对话日志（未配 `ADMIN_PASSWORD` 则整块禁用） |
 | `/robots.txt` `/sitemap.xml` `/rss.xml` | 由 `app/robots.ts`、`app/sitemap.ts`、`app/rss.xml/route.ts` 生成 |
 
 `/blog` 与 `/blog/:slug` 在 `next.config.mjs` 里做了 308 永久重定向。
@@ -136,6 +136,7 @@ server/                   后端（FastAPI + SQLAlchemy）
       embedding.py    向量档：none/hash/openai 三 provider、BLOB 信封、去均值、余弦与查询缓存
       embedding_job.py 补向量：CLI 与两个索引重建入口共用（best-effort，失败不影响导入）
       clipping.py     收藏管道：抓取 / 摘抄 / PDF 存档 / 写笔记 / 入库建索引（CLI 与后台共用）
+      summary.py      一句话摘要：确定性抽取（保存兜底）+ 模型生成/优化（编辑器按钮），两档分离
     api/routes/
       content.py      内容查询接口
       ask.py          博客助手问答（整包 + SSE 流式双路由）与会话回放

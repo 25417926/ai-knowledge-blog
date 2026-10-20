@@ -8,6 +8,7 @@ import {
   adminCreatePost,
   adminDeletePost,
   adminGetPost,
+  adminSummarize,
   adminUpdatePost,
   type AdminPostInput,
 } from '@/lib/admin';
@@ -24,6 +25,11 @@ const EMPTY: AdminPostInput = {
 
 const FIELD =
   'w-full rounded-xl border border-ink-line bg-ink-soft px-3 py-2 text-[13px] text-ink-text outline-none transition focus:border-accent';
+
+const GHOST =
+  'shrink-0 rounded-lg border border-ink-line px-2.5 py-1 text-[11px] text-ink-dim transition hover:text-ink-text disabled:opacity-40';
+const GHOST_ACCENT =
+  'shrink-0 rounded-lg border border-accent/40 px-2.5 py-1 text-[11px] text-accent-ink transition hover:bg-accent/10 disabled:opacity-40';
 
 function Label({ text, hint }: { text: string; hint?: string }) {
   return (
@@ -49,6 +55,9 @@ export default function AdminEditorPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  // 摘要按钮的运行态：'' 空闲 / 'extract' 抽取中 / 'ai' 模型生成中
+  const [generating, setGenerating] = useState<'' | 'extract' | 'ai'>('');
+  const [summaryNote, setSummaryNote] = useState('');
 
   // 新建成功后要跳到真实 slug，那次跳转会把组件重挂、state 清空，
   // 所以回执另挂一份在 URL 上带过来。抹参数用浏览器原生 API：
@@ -99,6 +108,38 @@ export default function AdminEditorPage() {
   const patch = (part: Partial<AdminPostInput>) => setForm((prev) => ({ ...prev, ...part }));
 
   const chars = form.content.replace(/\s/g, '').length;
+  const fromClipping = sourcePath.startsWith('clippings/');
+
+  /**
+   * 生成摘要。两档分工：
+   * - 抽取：纯函数、毫秒级，与「留空保存」走的是同一份实现，所以按钮看到的结果＝保存后的结果；
+   * - AI：走模型；正文里已有摘要时是「优化」——保住作者原本想强调的重点，只改表达。
+   */
+  async function gen(mode: 'extract' | 'ai') {
+    if (!form.content.trim() || generating) return;
+    const hadSummary = Boolean(form.summary.trim());
+    setGenerating(mode);
+    setError('');
+    setSummaryNote('');
+    try {
+      const res = await adminSummarize({
+        title: form.title,
+        content: form.content,
+        current: form.summary,
+        mode,
+      });
+      patch({ summary: res.summary });
+      setSummaryNote(
+        res.source === 'llm'
+          ? `模型已${hadSummary ? '优化' : '生成'}，可继续手改`
+          : (res.note ?? '已从正文首段抽取'),
+      );
+    } catch (err) {
+      setError(err instanceof AdminError ? err.message : String(err));
+    } finally {
+      setGenerating('');
+    }
+  }
 
   async function save(event: React.FormEvent) {
     event.preventDefault();
@@ -239,12 +280,50 @@ export default function AdminEditorPage() {
           />
         </div>
         <div>
-          <Label text="摘要" hint="列表页与卡片上的一行简介" />
+          <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-[11px] text-ink-dim">
+              摘要
+              <span className="ml-1.5 opacity-70">留空保存会自动从正文抽取</span>
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => gen('extract')}
+                disabled={Boolean(generating) || !form.content.trim()}
+                className={GHOST}
+                title="从正文首段抽一到两句，不走模型"
+              >
+                {generating === 'extract' ? '抽取中…' : '从正文抽取'}
+              </button>
+              <button
+                type="button"
+                onClick={() => gen('ai')}
+                disabled={Boolean(generating) || !form.content.trim()}
+                className={GHOST_ACCENT}
+                title={form.summary.trim() ? '让模型改进这句摘要的表达' : '让模型读正文写一句摘要'}
+              >
+                {generating === 'ai' ? '生成中…' : form.summary.trim() ? 'AI 优化' : 'AI 生成'}
+              </button>
+            </div>
+          </div>
           <input
             value={form.summary}
-            onChange={(e) => patch({ summary: e.target.value })}
+            onChange={(e) => {
+              patch({ summary: e.target.value });
+              setSummaryNote('');
+            }}
             className={FIELD}
+            placeholder="一句话说清这篇讲了什么"
           />
+          {summaryNote ? (
+            <p className="mt-1 text-[11px] text-emerald-600 dark:text-emerald-400">{summaryNote}</p>
+          ) : (
+            fromClipping && (
+              <p className="mt-1 text-[11px] text-ink-dim">
+                这句来自收藏时 AI 摘抄的导语。可以直接改，也可以点「AI 优化」让它重写。
+              </p>
+            )
+          )}
         </div>
       </div>
 

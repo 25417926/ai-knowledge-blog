@@ -127,6 +127,29 @@ export const adminUpdatePost = (slug: string, input: AdminPostInput) =>
 export const adminDeletePost = (slug: string) =>
   request<{ ok: boolean }>(`/posts/${encodeURIComponent(slug)}`, { method: 'DELETE' });
 
+// ── 摘要 ──────────────────────────────────────────────
+
+/** `extract` 是纯抽取（毫秒级）；`llm` 是模型写的；`mock` 是没配 LLM 时的抽取兜底。 */
+export type SummarySource = 'extract' | 'llm' | 'mock';
+
+export type SummaryResult = {
+  summary: string;
+  source: SummarySource;
+  note?: string;
+  model?: string;
+};
+
+/**
+ * 生成 / 优化一句话摘要。纯计算接口：不落库、不写文件，满意了再随文章一起保存。
+ * `current` 非空时后端走「优化」而不是「生成」。
+ */
+export const adminSummarize = (input: {
+  title: string;
+  content: string;
+  current?: string;
+  mode: 'extract' | 'ai';
+}) => request<SummaryResult>('/summary', { method: 'POST', body: JSON.stringify(input) });
+
 // ── 友链 ──────────────────────────────────────────────
 
 export type AdminFriend = {

@@ -257,6 +257,14 @@ export default function AdminClippingsPage() {
                     PDF
                   </a>
                 )}
+                {item.postExists && item.slug && (
+                  <Link
+                    href={`/admin/posts/${encodeURIComponent(item.slug)}`}
+                    className="text-[12px] text-ink-dim transition hover:text-ink-text"
+                  >
+                    编辑
+                  </Link>
+                )}
                 <button
                   type="button"
                   disabled={running}
@@ -317,6 +325,14 @@ function ResultCard({ result }: { result: ClipResult }) {
             className="text-[12px] font-medium text-accent-ink transition hover:opacity-80"
           >
             查看文章 →
+          </Link>
+        )}
+        {result.slug && (
+          <Link
+            href={`/admin/posts/${encodeURIComponent(result.slug)}`}
+            className="text-[12px] text-ink-dim transition hover:text-ink-text"
+          >
+            去写作区调整摘要 / 正文 →
           </Link>
         )}
         {result.pdfBytes > 0 && (

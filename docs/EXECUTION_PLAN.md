@@ -563,7 +563,7 @@ CLI `embed_chunks` 也改成调用同一份 `plan()` / `fill()`，三个入口�
 | 4 | 站点品牌仍叫「赛博小镇」 | 功能已无小镇 | 保留是刻意决策，想改名说一声 |
 | 5 | 仓库是 public | 笔记与站点文案对外可见 | 想转私有：`gh repo edit --visibility private --accept-visibility-change-consequences` |
 | 6 | 本机构建/预览坑 | 必须用全路径 node，`npx` 不可用；`next build` 要加 `CODEBUDDY_SAFE_DELETE_ENABLED=0` | 已记入项目记忆，照做即可 |
-| 7 | 摘要兜底（原 P1「自动摘要」） | **工具未建**：全仓没有 summary 生成入口，`clip.py` 的摘抄只服务「新收藏的文章」。现有 12 篇的 summary **全是手写的、库里为空 0 条**，故降级——原验收标准「12 篇 summary 全非空」已被现状满足 | 只在新增笔记 / 导真实 Vault 时才需要。届时就着 `init_db` 加一个 `--fill-summary`：扫 `summary` 为空的 post，复用 `clip.py` 的摘抄提示词（§5 的笔记体）生成首行导语写回 frontmatter，再重建索引；不新建模块、不新建表 |
+| 7 | ~~摘要兜底（原 P1「自动摘要」）~~ ✅ 已解决 | 2026-10-20 落地：`services/summary.py` 提供两档来源 —— `extract_summary()` 确定性抽取（纯函数、32 条单测）与 `llm_summary()`（模型写/改）。抽取站在**保存路径**上兜底（`admin._save` 摘要为空即抽取），LLM 只在编辑器按钮点击时触发，不进保存路径。端点 `POST /api/admin/summary`（`mode=extract\|ai`，`current` 非空即「优化」）纯计算、不落库。收藏管道的整篇摘抄与这里的一句话摘要是两层：摘抄进正文，摘要进 frontmatter | 若要批量回填历史空摘要：`python -c` 调 `extract_summary` 扫一遍即可，无需新脚本；换模型后重跑摘要按钮，别指望旧摘要自动刷新 |
 | 8 | `_score_chunk` 的三处偏差 | ① **无块长度归一** → 长文（《周刊》）靠面积大通吃；② **不看 tf**，出现一次与出现十次同分；③ idf 分母是「查询词数」而不是块总数，塞无用词反而让命中词权重变大 | 三处要一起改（单独的维度会让阈值失效）。改完必须连 `RAG_MIN_SCORE` 一起重标：实测加长度归一后 hit@4 10→11、MRR 0.501→0.624，但闸门要降到 0.5 才保住 10/16 过闸（闲话误放 0→1/13）。建议与 #9 一起做 |
 | 9 | ~~向量档有管线、缺引擎~~ ✅ 已解决 | 2026-10-17 下午接上本机 Ollama `qwen3-embedding:4b`，并发现必须**先减语料均值**才有区分度（§10.4）。hit@4 11→15、MRR 0.536→0.906，闲话仍 0 放行 | 换更强模型时按 §10.4 的顺序重标 `VEC_FLOOR` / `VEC_WEIGHT`；`qwen3-embedding:8b` 与 `bge-m3` 是可对比的下一档 |
 | 10 | 向量依赖本机 Ollama | 查询向量每次提问要打一次 `/v1/embeddings`（热态 0.18~0.65s）。Ollama 没起时自动退回纯关键词（不报错、不退化成错答案），但**召回会静默变弱** | 生产部署要么把 embedding 做成常驻服务，要么在 `/api/health` 里把 `embedding.ready=false` 显式暴露给前端；另外 Ollama 空闲 5 分钟会卸载模型，下一问多等约 10 秒（可用 `OLLAMA_KEEP_ALIVE` 常驻） |
@@ -629,7 +629,7 @@ CODEBUDDY_SAFE_DELETE_ENABLED=0 \
 
 | 优先级 | 缺口 | 证据 | 方案 |
 |---|---|---|---|
-| P5-1 | **自动总结没有生成入口** | §12 技术债 7「工具未建」；`summary` 只能手填（`init_db.py:148` 读 frontmatter / 编辑器输入框） | 保存时**确定性抽取**（首段 + 一级小节标题，纯函数 <1ms、可单测）+ 后台「AI 重写摘要」按钮复用 `services/clipping.py:253 summarize()`（异步、可覆盖）。**不把 LLM 放进保存路径**：会阻塞 2–10s，且 Mock 占位摘要入库后不会自动刷新 |
+| ~~P5-1~~ ✅ | ~~**自动总结没有生成入口**~~ 已做（2026-10-20） | 编辑器摘要行右侧两个按钮：`从正文抽取` / `AI 生成`（已有摘要时变 `AI 优化`）；留空保存自动抽取 | `server/app/services/summary.py` + `POST /api/admin/summary` + `src/lib/admin.ts:adminSummarize`。收藏生成的笔记导语会在编辑器里标明来源，可直接改或让模型重写 |
 | P5-2 | **AI 助手入口只有桌宠** | `MingyuePet.tsx:141` 是全仓唯一 `OPEN_ASSISTANT_EVENT` 派发点；导航栏无按钮 | 导航栏加常驻「问 AI」按钮（复用同一事件，约 10 行），桌宠降为趣味入口 |
 | P5-3 | **前端零测试 + e2e 在仓库外** | `src/` 无 `*.test.*`；P4 三条验收基线未脚本化 | `e2e/smoke.mjs` 三条冒烟：首页三区块在 / `/posts/不存在` 软 404 / 未登录访问 `/admin` 跳登录。不依赖 LLM。配 `npm run e2e` |
 | P5-4 | 访客意图只有原始日志 | `agent_turns` 170 轮、`citations` 282 条，`/admin/logs` 只按时间线平铺 | 只读聚合：高频问题 Top N + 零引用问题 + 按意图分组；再谈「问→答→补文档」闭环 |

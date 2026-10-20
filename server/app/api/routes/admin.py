@@ -34,6 +34,7 @@ from ...models import Clipping, Friend, Post, PostTag, Tag
 from ...services import agent_chat as svc
 from ...services import clipping as clip_svc
 from ...services import embedding_job
+from ...services import summary as summary_svc
 from ...services.content import list_friends
 from scripts.init_db import PROJECT_ROOT, import_vault, to_slug
 
@@ -176,14 +177,18 @@ async def _tags_of(session: AsyncSession, post_id: int) -> list[str]:
     return list(rows)
 
 
-def _build_markdown(body: PostBody, title: str, day: str) -> str:
-    """按 Vault 现有笔记的 frontmatter 风格组装文件内容。"""
+def _build_markdown(body: PostBody, title: str, day: str, summary: str | None = None) -> str:
+    """按 Vault 现有笔记的 frontmatter 风格组装文件内容。
+
+    `summary` 单独传是因为摘要在保存前可能被兜底改写过（见 `_save`），
+    而 `body` 是请求体的原样，不该为了一次兜底去改写它。
+    """
     meta = {
         "title": title,
         "category": _safe_folder(body.category),
         "tags": [t.strip() for t in body.tags if t.strip()],
         "date": day,
-        "summary": body.summary.strip(),
+        "summary": (body.summary if summary is None else summary).strip(),
     }
     return frontmatter.dumps(frontmatter.Post(content=body.content, **meta)) + "\n"
 
@@ -203,9 +208,14 @@ async def _save(body: PostBody, slug: str, existing: Post | None, session: Async
     status = body.status if body.status in STATUSES else "published"
     day = body.date.strip() or (existing.published_at if existing else "") or date.today().isoformat()
 
+    # 摘要留空不再等于「往 frontmatter 塞一个空串」：确定性抽取兜一句。
+    # 这里刻意不走 LLM——保存要快（模型一卡 2~10 秒），而且 Mock 摘要一旦入库
+    # 不会在配好 Key 之后自动更新。想让模型写，是编辑器里那个按钮的事。
+    summary = body.summary.strip() or summary_svc.extract_summary(title, body.content)
+
     path = _target_path(body, slug, existing)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_build_markdown(body, title, day), encoding="utf-8")
+    path.write_text(_build_markdown(body, title, day, summary), encoding="utf-8")
 
     # 重建索引：复用 vault 导入器，切分 / 双链 / 标签一次到位。
     # 全量重导也是**正确**选择——新文章的反向链接要靠「所有笔记一起解析」才能接上。
@@ -221,6 +231,8 @@ async def _save(body: PostBody, slug: str, existing: Post | None, session: Async
     return {
         "ok": True,
         "slug": slug,
+        "summary": summary,
+        "summaryGenerated": not body.summary.strip(),
         "sourcePath": path.relative_to(VAULT_DIR).as_posix(),
         "status": status,
         "stats": stats,
@@ -284,6 +296,36 @@ async def admin_delete_post(
     await session.execute(delete(Tag).where(Tag.id.not_in(select(PostTag.tag_id))))
     await session.commit()
     return {"ok": True, "slug": slug}
+
+
+# ── 摘要 ──────────────────────────────────────────────
+#
+# 纯计算端点：不写库、不碰文件。作者在编辑器里反复点也不产生副作用，
+# 满意了再随文章一起 PUT 保存。收藏管道那条摘抄（整篇 Markdown）走的是
+# clipping.summarize()，与这里的一句话摘要是两层东西，别混。
+
+
+class SummaryBody(BaseModel):
+    title: str = ""
+    content: str = ""
+    current: str = ""  # 作者已写的摘要；非空表示「优化」而不是「生成」
+    mode: str = "extract"  # extract | ai
+
+
+@router.post("/admin/summary", dependencies=[Depends(require_admin)])
+async def admin_summary(body: SummaryBody) -> dict[str, Any]:
+    content = body.content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="正文为空，没有可总结的内容")
+    try:
+        return await summary_svc.make_summary(
+            body.title.strip(),
+            content,
+            "ai" if body.mode == "ai" else "extract",
+            body.current.strip(),
+        )
+    except Exception as err:  # 模型超时/额度/网络：让作者看见原因，而不是静默降级
+        raise HTTPException(status_code=502, detail=f"AI 摘要生成失败：{err}") from err
 
 
 # ── 友链 ──────────────────────────────────────────────
