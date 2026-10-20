@@ -75,9 +75,10 @@ export function Toc({ items }: { items: TocItem[] }) {
 
   return (
     <>
-      {/* 桌面：右侧吸顶 */}
-      <nav aria-label="目录" className="hidden lg:block">
-        <div className="sticky top-24">
+      {/* 桌面：右侧吸顶。nav 必须撑满 grid 行高，否则 sticky 没有滑动空间（高度=内容高度时为 0）；
+          目录本身超过视口时在内部滚动，别把条目顶出屏幕 */}
+      <nav aria-label="目录" className="hidden lg:block lg:h-full">
+        <div className="sticky top-24 max-h-[calc(100vh-8rem)] overflow-y-auto overscroll-contain pb-4">
           <p className="mb-3 font-mono text-[10.5px] tracking-[0.3em] text-ink-dim">TABLE OF CONTENTS</p>
           {list}
         </div>

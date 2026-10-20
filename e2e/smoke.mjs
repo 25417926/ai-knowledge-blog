@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * 六条冒烟 e2e（EXECUTION_PLAN §14.2 P5-3、§18、§20）。
+ * 七条冒烟 e2e（EXECUTION_PLAN §14.2 P5-3、§18、§20）。
  *
- * 为什么只有六条：`src/` 到这一轮为止没有任何前端测试，这里补的是**最容易整体崩掉、
- * 崩了最丢人**的路径，不是覆盖率。六条都刻意不碰 LLM——一次问答要等本机模型
+ * 为什么只有七条：`src/` 到这一轮为止没有任何前端测试，这里补的是**最容易整体崩掉、
+ * 崩了最丢人**的路径，不是覆盖率。七条都刻意不碰 LLM——一次问答要等本机模型
  * 十几秒，把它塞进冒烟会让「跑一下看看」变成没人愿意跑的东西。
  *
  *   1. 首页三区块都在（博主资料 / 最新文章 / 主题导览），且文章数据是通的
@@ -12,12 +12,16 @@
  *   4. 文章页的助手有「只搜当前这篇」，首页没有
  *   5. 导航里的「图谱」能进 /graph，画出来的节点数与 /api/graph 一致，且 WebGL 画布真有像素
  *   6. 收藏稿的 `> [!tip]` 渲染成 callout 卡片，页面上不留字面残留
+ *   7. 文章页右侧目录真吸顶：翻到中段仍然停在视口上沿
  *
  * 第 4 条是补漏出来的：`articleSlug` 的正则一直写着 `^/blog/(.+)$`，而路由早就是
  * `/posts/[slug]` —— 于是这个开关在文章页**从来没渲染过**，也没有任何报错。
  * 这类「路由改了、跟着它的字符串没改」的失效，只有 e2e 看得见。
  * 第 5 条同理：`/api/graph` 与 `getGraph()` 曾经长时间零调用，接口在、页面不在。
  * 这一条现在还负责盯住「画布空转」——见 §21，节点数对、像素全透明的那种。
+ * 第 7 条盯的是一类「写了 sticky 但没生效」的静默失效：sticky 的父元素高度如果只等于
+ * 内容高度，可滑动距离就是 0，`position: sticky` 照样会是计算样式里的 `sticky`，
+ * 只是滚起来跟 `static` 一模一样 —— 没有报错、没有视觉异常，只有滚动才看得出来。
  *
  * 依赖：前端 `next start`（:3401）与后端（:8000）都要在跑。脚本先探活，
  * 服务没起时直接给「先起服务」的提示，而不是抛一个看不懂的超时。
@@ -307,6 +311,54 @@ async function caseGraphPage(page) {
   return `${count} 个节点 · ${data.edges.length} 条连线 · ${painted === -1 ? 'SVG 兜底' : `${painted} 个像素`}`;
 }
 
+async function caseTocSticky(page) {
+  // 挑字数最多的一篇：目录越长越能暴露「父容器高度不够」。短文章目录本身就矮，
+  // 失效了也看不出来，拿它当样本等于白测。
+  const res = await fetch(`${BASE}/api/posts`);
+  if (!res.ok) throw new Error(`/api/posts HTTP ${res.status}`);
+  const posts = await res.json();
+  const post = (Array.isArray(posts) ? posts : []).sort((a, b) => b.wordCount - a.wordCount)[0];
+  if (!post) throw new Error('库里没有文章（先跑 npm run setup）');
+
+  await page.goto(`${BASE}/posts/${encodeURIComponent(post.slug)}`, { waitUntil: 'domcontentloaded' });
+  const nav = page.locator('nav[aria-label="目录"]');
+  await nav.waitFor({ state: 'visible', timeout: TIMEOUT });
+
+  const readTop = () =>
+    page.evaluate(() => {
+      // 桌面档的吸顶元素是 nav 里那个 sticky div；nav 本身跟着 grid 行高走
+      const sticky = document.querySelector('nav[aria-label="目录"] > div');
+      if (!sticky) return null;
+      const rect = sticky.getBoundingClientRect();
+      return { top: Math.round(rect.top), bottom: Math.round(rect.bottom), y: Math.round(window.scrollY) };
+    });
+
+  // behavior:'instant' 覆盖掉 html 上的 scroll-behavior:smooth，否则读到的是滚动途中的位置
+  const scrollTo = async (y) => {
+    await page.evaluate((target) => window.scrollTo({ top: target, behavior: 'instant' }), y);
+    await page.waitForTimeout(150);
+    return readTop();
+  };
+
+  await scrollTo(0);
+  const docH = await page.evaluate(() => document.documentElement.scrollHeight);
+  const mid = await scrollTo(1400);
+  if (!mid) throw new Error('找不到吸顶的目录元素');
+  if (mid.y < 1000) throw new Error(`页面没滚动起来（scrollY=${mid.y}），长文页面高度 ${docH}`);
+  if (mid.top < 0 || mid.top > 120) {
+    throw new Error(`滚到 ${mid.y} 时目录 top=${mid.top}（期望贴住视口上沿 96px 附近；负值＝跟着滚出去了）`);
+  }
+
+  // 底部仍要跟着：只测中段会漏掉「父容器半路到底、目录提前停住」
+  const deep = await scrollTo(Math.round(docH * 0.75));
+  if (!deep) throw new Error('找不到吸顶的目录元素');
+  if (deep.top < 0 || deep.top > 120) {
+    throw new Error(`滚到 ${deep.y} 时目录 top=${deep.top}，半路就不跟了`);
+  }
+
+  return `《${post.title}》· 滚到 ${mid.y}/${deep.y} 时目录 top 均为 ${deep.top}px`;
+}
+
 async function caseCallout(page) {
   const res = await fetch(`${BASE}/api/posts`);
   if (!res.ok) throw new Error(`/api/posts HTTP ${res.status}`);
@@ -354,6 +406,7 @@ async function main() {
   await step('文章页才有「只搜本文」', () => caseScopedAsk(page));
   await step('图谱页节点数与接口一致', () => caseGraphPage(page));
   await step('收藏稿 callout 已渲染', () => caseCallout(page));
+  await step('文章页目录滚动跟随', () => caseTocSticky(page));
   await step('不存在的文章走软 404', () => caseSoft404(page));
   await step('未登录访问后台跳登录', () => caseAdminGate(page));
 
